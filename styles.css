@@ -1,13 +1,12 @@
-.ffg-group {
-  margin: 10px 0 2px 0;
-  border-top: 1px solid var(--background-modifier-border);
-  padding-top: 4px;
+/* Virtual grouping: container becomes flex when active so child `order` works. */
+.metadata-container.ffg-active {
+  display: flex;
+  flex-direction: column;
 }
 
-.ffg-group.ffg-folded {
-  margin: 2px 0;
-  border-top: none;
-  padding-top: 0;
+/* Hide properties whose group is folded. */
+.metadata-property[data-ffg-folded="true"] {
+  display: none;
 }
 
 .ffg-group-header {
@@ -15,6 +14,8 @@
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
   cursor: pointer;
   user-select: none;
   color: var(--text-normal);
@@ -25,9 +26,11 @@
   touch-action: manipulation;
 }
 
-.ffg-group.ffg-folded .ffg-group-header {
+.ffg-group-header[data-folded="true"] {
   color: var(--text-faint);
   font-weight: normal;
+  border-top: none;
+  margin-top: 2px;
 }
 
 @media (hover: hover) {
@@ -71,7 +74,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.ffg-group:not(.ffg-folded) .ffg-count {
+.ffg-group-header:not([data-folded="true"]) .ffg-count {
   display: none;
 }
 

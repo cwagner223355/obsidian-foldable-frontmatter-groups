@@ -117,7 +117,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   private lastActiveFile: TFile | null = null;
 
   async onload() {
-    console.log("[FFG] loading v0.6");
+    console.log("[FFG] loading v0.7");
     await this.loadSettings();
     this.addSettingTab(new FfgSettingTab(this.app, this));
     this.installObserver();
@@ -164,7 +164,9 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     console.log("[FFG] unloading");
     this.observer?.disconnect();
     this.observer = null;
-    this.unwrapAll();
+    document
+      .querySelectorAll<HTMLElement>(".metadata-container")
+      .forEach((c) => this.deactivate(c));
     document
       .querySelectorAll(".ffg-settings-gear")
       .forEach((el) => el.remove());
@@ -201,13 +203,8 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   }
 
   private onSettingsChanged() {
-    if (!this.settings.groupFoldingEnabled) {
-      this.unwrapAll();
-      return;
-    }
     this.isProcessing = true;
     try {
-      this.unwrapAll();
       document
         .querySelectorAll<HTMLElement>(".metadata-container")
         .forEach((c) => {
@@ -270,120 +267,215 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     }
   }
 
+  // ── Virtual grouping (CSS-order based; no DOM moves) ───────────────────────
+
+  private static readonly TOP_BASE = 0;
+  private static readonly UNMATCHED_BASE = 10000;
+  private static readonly GROUP_BLOCK_BASE = 100000;
+  private static readonly GROUP_BLOCK_SIZE = 10000;
+  private static readonly ADD_BUTTON_ORDER = 999999;
+
   private processContainer(container: HTMLElement) {
     try {
       this.ensureSettingsGear(container);
+      this.ensureAddButtonOrder(container);
 
-      if (!this.settings.groupFoldingEnabled) return;
+      if (!this.settings.groupFoldingEnabled) {
+        this.deactivate(container);
+        return;
+      }
+
+      container.classList.add("ffg-active");
 
       const groups = this.runtimeGroups;
-      if (!this.needsRegrouping(container, groups)) return;
-
       const allProps = Array.from(
         container.querySelectorAll<HTMLElement>(".metadata-property")
       );
-      if (allProps.length === 0) return;
 
-      const topLevelProp = allProps.find((p) => !p.closest(".ffg-group-body"));
-      const existingWrapper = container.querySelector<HTMLElement>(".ffg-group");
-      const mainParent =
-        topLevelProp?.parentElement ?? existingWrapper?.parentElement ?? null;
-      if (!mainParent) return;
-
+      // Initialize / extend per-container fold state.
       let state = this.foldState.get(container);
       if (!state) {
         state = new Map();
-        for (const g of groups) state.set(g.id, g.defaultFolded);
         this.foldState.set(container, state);
+      }
+      for (const g of groups) {
+        if (!state.has(g.id)) state.set(g.id, g.defaultFolded);
       }
 
       const topSet = new Set(this.settings.topZone.fieldOrder);
 
-      const expectedGroup = (p: HTMLElement): string | null => {
+      type Bucket =
+        | { kind: "top"; index: number }
+        | { kind: "unmatched"; fileIndex: number }
+        | { kind: "group"; groupId: string; index: number };
+
+      const bucketByEl = new Map<HTMLElement, Bucket>();
+      const groupMembers = new Map<string, HTMLElement[]>();
+
+      for (let i = 0; i < allProps.length; i++) {
+        const p = allProps[i];
         const key = p.dataset.propertyKey ?? "";
-        if (topSet.has(key)) return null;
-        for (const g of groups) {
-          if (g.matcher(key)) return g.id;
-        }
-        return null;
-      };
 
-      const propsByGroup = new Map<string, HTMLElement[]>();
-      for (const p of allProps) {
-        const gid = expectedGroup(p);
-        if (gid !== null) {
-          const arr = propsByGroup.get(gid) ?? [];
-          arr.push(p);
-          propsByGroup.set(gid, arr);
-        }
-      }
-
-      for (const g of groups) {
-        const props = propsByGroup.get(g.id) ?? [];
-        let wrapper = container.querySelector<HTMLElement>(
-          `.ffg-group[data-group-id="${g.id}"]`
-        );
-
-        if (props.length === 0) {
-          if (wrapper) this.unwrapOne(wrapper);
+        if (topSet.has(key)) {
+          bucketByEl.set(p, {
+            kind: "top",
+            index: this.settings.topZone.fieldOrder.indexOf(key),
+          });
           continue;
         }
 
-        if (!wrapper) {
-          const folded = state.get(g.id) ?? g.defaultFolded;
-          wrapper = this.createWrapper(g, folded, container);
-          mainParent.appendChild(wrapper);
-        }
-
-        const body = wrapper.querySelector<HTMLElement>(".ffg-group-body");
-        if (!body) continue;
-
-        const ordered = orderByFieldOrder(props, g.fieldOrder);
-        for (const p of ordered) body.appendChild(p);
-
-        const count = wrapper.querySelector<HTMLElement>(".ffg-count");
-        if (count) count.textContent = `(${props.length})`;
-      }
-
-      for (const p of allProps) {
-        if (expectedGroup(p) === null && p.closest(".ffg-group-body")) {
-          mainParent.appendChild(p);
-        }
-      }
-
-      // Top zone: position listed top-zone props at the start of mainParent in configured order.
-      if (topSet.size > 0) {
-        const topProps = allProps.filter((p) =>
-          topSet.has(p.dataset.propertyKey ?? "")
-        );
-        if (topProps.length > 0) {
-          const orderedTop = orderByFieldOrder(topProps, this.settings.topZone.fieldOrder);
-          for (let i = orderedTop.length - 1; i >= 0; i--) {
-            mainParent.insertBefore(orderedTop[i], mainParent.firstChild);
+        let matchedGroupId: string | null = null;
+        for (const g of groups) {
+          if (g.matcher(key)) {
+            matchedGroupId = g.id;
+            break;
           }
         }
+
+        if (matchedGroupId) {
+          const arr = groupMembers.get(matchedGroupId) ?? [];
+          arr.push(p);
+          groupMembers.set(matchedGroupId, arr);
+        } else {
+          bucketByEl.set(p, { kind: "unmatched", fileIndex: i });
+        }
       }
+
+      // Within-group ordering: explicit fieldOrder first, then unlisted in file order.
+      for (const g of groups) {
+        const members = groupMembers.get(g.id) ?? [];
+        if (members.length === 0) continue;
+        const ordered = orderByFieldOrder(members, g.fieldOrder);
+        for (let i = 0; i < ordered.length; i++) {
+          bucketByEl.set(ordered[i], { kind: "group", groupId: g.id, index: i });
+        }
+      }
+
+      const knownGroupIds = new Set(groups.map((g) => g.id));
+
+      // Apply tags + order to each property.
+      for (const p of allProps) {
+        const b = bucketByEl.get(p);
+        if (!b) continue;
+
+        let order: number;
+        if (b.kind === "top") {
+          order = FoldableFrontmatterGroupsPlugin.TOP_BASE + b.index;
+          this.clearGroupTagging(p);
+        } else if (b.kind === "unmatched") {
+          order = FoldableFrontmatterGroupsPlugin.UNMATCHED_BASE + b.fileIndex;
+          this.clearGroupTagging(p);
+        } else {
+          const groupIdx = groups.findIndex((g) => g.id === b.groupId);
+          order =
+            FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_BASE +
+            groupIdx * FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_SIZE +
+            1 +
+            b.index;
+          const folded = state.get(b.groupId) ?? false;
+          if (p.dataset.ffgGroup !== b.groupId) p.dataset.ffgGroup = b.groupId;
+          const foldVal = folded ? "true" : "false";
+          if (p.dataset.ffgFolded !== foldVal) p.dataset.ffgFolded = foldVal;
+        }
+
+        const orderStr = String(order);
+        if (p.style.order !== orderStr) p.style.order = orderStr;
+      }
+
+      this.ensureGroupHeaders(container, groups, groupMembers, state, knownGroupIds);
     } catch (e) {
       console.error("[FFG] processContainer error", e);
     }
   }
 
-  private createWrapper(
-    g: RuntimeGroup,
-    folded: boolean,
-    container: HTMLElement
-  ): HTMLElement {
-    const wrapper = document.createElement("div");
-    wrapper.className = "ffg-group";
-    if (folded) wrapper.classList.add("ffg-folded");
-    wrapper.dataset.groupId = g.id;
+  private clearGroupTagging(p: HTMLElement) {
+    if (p.dataset.ffgGroup) delete p.dataset.ffgGroup;
+    if (p.dataset.ffgFolded) delete p.dataset.ffgFolded;
+  }
 
+  private ensureGroupHeaders(
+    container: HTMLElement,
+    groups: RuntimeGroup[],
+    members: Map<string, HTMLElement[]>,
+    state: Map<string, boolean>,
+    knownGroupIds: Set<string>
+  ) {
+    const propParent = this.findPropParent(container);
+    if (!propParent) return;
+
+    const existing = new Map<string, HTMLElement>();
+    propParent
+      .querySelectorAll<HTMLElement>(":scope > .ffg-group-header")
+      .forEach((h) => {
+        const id = h.dataset.groupId;
+        if (id) existing.set(id, h);
+      });
+
+    for (let k = 0; k < groups.length; k++) {
+      const g = groups[k];
+      const memberList = members.get(g.id) ?? [];
+
+      if (memberList.length === 0) {
+        const stale = existing.get(g.id);
+        if (stale) stale.remove();
+        continue;
+      }
+
+      let header = existing.get(g.id);
+      if (!header) {
+        header = this.createGroupHeader(g, container);
+        propParent.appendChild(header);
+      }
+
+      const order =
+        FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_BASE +
+        k * FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_SIZE;
+      const orderStr = String(order);
+      if (header.style.order !== orderStr) header.style.order = orderStr;
+
+      const folded = state.get(g.id) ?? g.defaultFolded;
+      const foldVal = folded ? "true" : "false";
+      if (header.dataset.folded !== foldVal) header.dataset.folded = foldVal;
+
+      const chevron = header.querySelector<HTMLElement>(".ffg-chevron");
+      if (chevron) {
+        const expected = folded ? "chevron-right" : "chevron-down";
+        if (chevron.dataset.iconState !== expected) {
+          setIcon(chevron, expected);
+          chevron.dataset.iconState = expected;
+        }
+      }
+
+      const nameEl = header.querySelector<HTMLElement>(".ffg-name");
+      if (nameEl && nameEl.textContent !== g.name) nameEl.textContent = g.name;
+
+      const countEl = header.querySelector<HTMLElement>(".ffg-count");
+      if (countEl) {
+        const text = `(${memberList.length})`;
+        if (countEl.textContent !== text) countEl.textContent = text;
+      }
+    }
+
+    // Remove orphaned headers (group deleted from settings).
+    for (const [id, header] of existing) {
+      if (!knownGroupIds.has(id)) header.remove();
+    }
+  }
+
+  private findPropParent(container: HTMLElement): HTMLElement | null {
+    const firstProp = container.querySelector<HTMLElement>(".metadata-property");
+    return firstProp?.parentElement ?? null;
+  }
+
+  private createGroupHeader(g: RuntimeGroup, container: HTMLElement): HTMLElement {
     const header = document.createElement("div");
     header.className = "ffg-group-header";
+    header.dataset.groupId = g.id;
 
     const chevron = document.createElement("span");
     chevron.className = "ffg-chevron";
-    setIcon(chevron, folded ? "chevron-right" : "chevron-down");
+    setIcon(chevron, "chevron-right");
+    chevron.dataset.iconState = "chevron-right";
 
     const name = document.createElement("span");
     name.className = "ffg-name";
@@ -396,10 +488,6 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     header.appendChild(chevron);
     header.appendChild(name);
     header.appendChild(count);
-
-    const body = document.createElement("div");
-    body.className = "ffg-group-body";
-    if (folded) body.style.display = "none";
 
     const blockBubbling = (e: Event) => {
       e.preventDefault();
@@ -414,90 +502,69 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
-        const groupState = this.foldState.get(container);
-        if (!groupState) return;
-        const newFolded = !groupState.get(g.id);
-        groupState.set(g.id, newFolded);
-        body.style.display = newFolded ? "none" : "";
-        setIcon(chevron, newFolded ? "chevron-right" : "chevron-down");
-        wrapper.classList.toggle("ffg-folded", newFolded);
+        this.toggleGroupFold(container, g.id);
       },
       true
     );
 
-    wrapper.appendChild(header);
-    wrapper.appendChild(body);
-    return wrapper;
+    return header;
   }
 
-  private needsRegrouping(container: HTMLElement, groups: RuntimeGroup[]): boolean {
-    const allProps = Array.from(
-      container.querySelectorAll<HTMLElement>(".metadata-property")
-    );
-    const topSet = new Set(this.settings.topZone.fieldOrder);
+  private toggleGroupFold(container: HTMLElement, groupId: string) {
+    const state = this.foldState.get(container);
+    if (!state) return;
+    const newFolded = !state.get(groupId);
+    state.set(groupId, newFolded);
 
-    for (const p of allProps) {
-      const key = p.dataset.propertyKey ?? "";
-      let shouldBeIn: string | null = null;
-      if (!topSet.has(key)) {
-        for (const g of groups) {
-          if (g.matcher(key)) {
-            shouldBeIn = g.id;
-            break;
-          }
-        }
-      }
-      const inBody = p.closest(".ffg-group-body");
-      if (shouldBeIn === null) {
-        if (inBody) return true;
-      } else {
-        if (!inBody) return true;
-        const wrapper = inBody.closest(".ffg-group") as HTMLElement | null;
-        if (wrapper?.dataset.groupId !== shouldBeIn) return true;
-      }
-    }
+    this.isProcessing = true;
+    try {
+      const foldVal = newFolded ? "true" : "false";
+      const escaped =
+        typeof CSS !== "undefined" && CSS.escape ? CSS.escape(groupId) : groupId;
 
-    if (topSet.size > 0) {
-      const topProps = allProps.filter((p) => topSet.has(p.dataset.propertyKey ?? ""));
-      if (topProps.length > 0) {
-        const ordered = orderByFieldOrder(topProps, this.settings.topZone.fieldOrder);
-        const parent = ordered[0].parentElement;
-        if (!parent) return true;
-        const topLevelProps: HTMLElement[] = [];
-        for (const child of Array.from(parent.children)) {
-          if (child instanceof HTMLElement && child.classList.contains("metadata-property")) {
-            topLevelProps.push(child);
-            if (topLevelProps.length >= ordered.length) break;
-          }
-        }
-        for (let i = 0; i < ordered.length; i++) {
-          if (topLevelProps[i] !== ordered[i]) return true;
-        }
-      }
-    }
+      container
+        .querySelectorAll<HTMLElement>(
+          `.metadata-property[data-ffg-group="${escaped}"]`
+        )
+        .forEach((p) => {
+          if (p.dataset.ffgFolded !== foldVal) p.dataset.ffgFolded = foldVal;
+        });
 
-    for (const g of groups) {
-      if (g.fieldOrder.length === 0) continue;
-      const wrapper = container.querySelector<HTMLElement>(
-        `.ffg-group[data-group-id="${g.id}"]`
+      const header = container.querySelector<HTMLElement>(
+        `.ffg-group-header[data-group-id="${escaped}"]`
       );
-      if (!wrapper) continue;
-      const body = wrapper.querySelector<HTMLElement>(".ffg-group-body");
-      if (!body) continue;
-      const groupProps = Array.from(body.querySelectorAll<HTMLElement>(".metadata-property"));
-      const ordered = orderByFieldOrder(groupProps, g.fieldOrder);
-      for (let i = 0; i < groupProps.length; i++) {
-        if (groupProps[i] !== ordered[i]) return true;
+      if (header) {
+        if (header.dataset.folded !== foldVal) header.dataset.folded = foldVal;
+        const chevron = header.querySelector<HTMLElement>(".ffg-chevron");
+        if (chevron) {
+          const expected = newFolded ? "chevron-right" : "chevron-down";
+          setIcon(chevron, expected);
+          chevron.dataset.iconState = expected;
+        }
       }
+    } finally {
+      this.isProcessing = false;
     }
-
-    return false;
   }
 
-  private unwrapAll() {
-    document
-      .querySelectorAll<HTMLElement>(".ffg-group")
-      .forEach((wrapper) => this.unwrapOne(wrapper));
+  private ensureAddButtonOrder(container: HTMLElement) {
+    const addBtn = container.querySelector<HTMLElement>(".metadata-add-button");
+    if (!addBtn) return;
+    const orderStr = String(FoldableFrontmatterGroupsPlugin.ADD_BUTTON_ORDER);
+    if (addBtn.style.order !== orderStr) addBtn.style.order = orderStr;
+  }
+
+  private deactivate(container: HTMLElement) {
+    container.classList.remove("ffg-active");
+    container
+      .querySelectorAll<HTMLElement>(".ffg-group-header")
+      .forEach((h) => h.remove());
+    container.querySelectorAll<HTMLElement>(".metadata-property").forEach((p) => {
+      this.clearGroupTagging(p);
+      if (p.style.order) p.style.removeProperty("order");
+    });
+    const addBtn = container.querySelector<HTMLElement>(".metadata-add-button");
+    if (addBtn?.style.order) addBtn.style.removeProperty("order");
   }
 
   private ensureSettingsGear(container: HTMLElement) {
@@ -534,17 +601,6 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     );
 
     addBtn.appendChild(gear);
-  }
-
-  private unwrapOne(wrapper: HTMLElement) {
-    const body = wrapper.querySelector<HTMLElement>(".ffg-group-body");
-    const parent = wrapper.parentElement;
-    if (parent && body) {
-      Array.from(body.children).forEach((child) => {
-        parent.insertBefore(child, wrapper);
-      });
-    }
-    wrapper.remove();
   }
 
   // ── Canonical order + reconcile ─────────────────────────────────────────────
@@ -823,7 +879,7 @@ class FfgSettingTab extends PluginSettingTab {
             id: Date.now().toString(36) + Math.random().toString(36).slice(2),
             name: "New Group",
             matcherType: "prefix",
-            matcherValue: "",
+            matcherValues: [],
             defaultFolded: true,
             fieldOrder: [],
           });

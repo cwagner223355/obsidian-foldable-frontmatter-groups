@@ -90,7 +90,7 @@ function toRuntimeGroup(g) {
     matcher
   };
 }
-var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
+var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
     this.observer = null;
@@ -99,7 +99,7 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
     this.lastActiveFile = null;
   }
   async onload() {
-    console.log("[FFG] loading v0.6");
+    console.log("[FFG] loading v0.7");
     await this.loadSettings();
     this.addSettingTab(new FfgSettingTab(this.app, this));
     this.installObserver();
@@ -142,7 +142,7 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
     console.log("[FFG] unloading");
     (_a = this.observer) == null ? void 0 : _a.disconnect();
     this.observer = null;
-    this.unwrapAll();
+    document.querySelectorAll(".metadata-container").forEach((c) => this.deactivate(c));
     document.querySelectorAll(".ffg-settings-gear").forEach((el) => el.remove());
   }
   async loadSettings() {
@@ -171,13 +171,8 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
     this.onSettingsChanged();
   }
   onSettingsChanged() {
-    if (!this.settings.groupFoldingEnabled) {
-      this.unwrapAll();
-      return;
-    }
     this.isProcessing = true;
     try {
-      this.unwrapAll();
       document.querySelectorAll(".metadata-container").forEach((c) => {
         if (c.isConnected) this.processContainer(c);
       });
@@ -228,99 +223,155 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
     }
   }
   processContainer(container) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d;
     try {
       this.ensureSettingsGear(container);
-      if (!this.settings.groupFoldingEnabled) return;
+      this.ensureAddButtonOrder(container);
+      if (!this.settings.groupFoldingEnabled) {
+        this.deactivate(container);
+        return;
+      }
+      container.classList.add("ffg-active");
       const groups = this.runtimeGroups;
-      if (!this.needsRegrouping(container, groups)) return;
       const allProps = Array.from(
         container.querySelectorAll(".metadata-property")
       );
-      if (allProps.length === 0) return;
-      const topLevelProp = allProps.find((p) => !p.closest(".ffg-group-body"));
-      const existingWrapper = container.querySelector(".ffg-group");
-      const mainParent = (_b = (_a = topLevelProp == null ? void 0 : topLevelProp.parentElement) != null ? _a : existingWrapper == null ? void 0 : existingWrapper.parentElement) != null ? _b : null;
-      if (!mainParent) return;
       let state = this.foldState.get(container);
       if (!state) {
         state = /* @__PURE__ */ new Map();
-        for (const g of groups) state.set(g.id, g.defaultFolded);
         this.foldState.set(container, state);
       }
+      for (const g of groups) {
+        if (!state.has(g.id)) state.set(g.id, g.defaultFolded);
+      }
       const topSet = new Set(this.settings.topZone.fieldOrder);
-      const expectedGroup = (p) => {
-        var _a2;
-        const key = (_a2 = p.dataset.propertyKey) != null ? _a2 : "";
-        if (topSet.has(key)) return null;
-        for (const g of groups) {
-          if (g.matcher(key)) return g.id;
+      const bucketByEl = /* @__PURE__ */ new Map();
+      const groupMembers = /* @__PURE__ */ new Map();
+      for (let i = 0; i < allProps.length; i++) {
+        const p = allProps[i];
+        const key = (_a = p.dataset.propertyKey) != null ? _a : "";
+        if (topSet.has(key)) {
+          bucketByEl.set(p, {
+            kind: "top",
+            index: this.settings.topZone.fieldOrder.indexOf(key)
+          });
+          continue;
         }
-        return null;
-      };
-      const propsByGroup = /* @__PURE__ */ new Map();
-      for (const p of allProps) {
-        const gid = expectedGroup(p);
-        if (gid !== null) {
-          const arr = (_c = propsByGroup.get(gid)) != null ? _c : [];
+        let matchedGroupId = null;
+        for (const g of groups) {
+          if (g.matcher(key)) {
+            matchedGroupId = g.id;
+            break;
+          }
+        }
+        if (matchedGroupId) {
+          const arr = (_b = groupMembers.get(matchedGroupId)) != null ? _b : [];
           arr.push(p);
-          propsByGroup.set(gid, arr);
+          groupMembers.set(matchedGroupId, arr);
+        } else {
+          bucketByEl.set(p, { kind: "unmatched", fileIndex: i });
         }
       }
       for (const g of groups) {
-        const props = (_d = propsByGroup.get(g.id)) != null ? _d : [];
-        let wrapper = container.querySelector(
-          `.ffg-group[data-group-id="${g.id}"]`
-        );
-        if (props.length === 0) {
-          if (wrapper) this.unwrapOne(wrapper);
-          continue;
+        const members = (_c = groupMembers.get(g.id)) != null ? _c : [];
+        if (members.length === 0) continue;
+        const ordered = orderByFieldOrder(members, g.fieldOrder);
+        for (let i = 0; i < ordered.length; i++) {
+          bucketByEl.set(ordered[i], { kind: "group", groupId: g.id, index: i });
         }
-        if (!wrapper) {
-          const folded = (_e = state.get(g.id)) != null ? _e : g.defaultFolded;
-          wrapper = this.createWrapper(g, folded, container);
-          mainParent.appendChild(wrapper);
-        }
-        const body = wrapper.querySelector(".ffg-group-body");
-        if (!body) continue;
-        const ordered = orderByFieldOrder(props, g.fieldOrder);
-        for (const p of ordered) body.appendChild(p);
-        const count = wrapper.querySelector(".ffg-count");
-        if (count) count.textContent = `(${props.length})`;
       }
+      const knownGroupIds = new Set(groups.map((g) => g.id));
       for (const p of allProps) {
-        if (expectedGroup(p) === null && p.closest(".ffg-group-body")) {
-          mainParent.appendChild(p);
+        const b = bucketByEl.get(p);
+        if (!b) continue;
+        let order;
+        if (b.kind === "top") {
+          order = _FoldableFrontmatterGroupsPlugin.TOP_BASE + b.index;
+          this.clearGroupTagging(p);
+        } else if (b.kind === "unmatched") {
+          order = _FoldableFrontmatterGroupsPlugin.UNMATCHED_BASE + b.fileIndex;
+          this.clearGroupTagging(p);
+        } else {
+          const groupIdx = groups.findIndex((g) => g.id === b.groupId);
+          order = _FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_BASE + groupIdx * _FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_SIZE + 1 + b.index;
+          const folded = (_d = state.get(b.groupId)) != null ? _d : false;
+          if (p.dataset.ffgGroup !== b.groupId) p.dataset.ffgGroup = b.groupId;
+          const foldVal = folded ? "true" : "false";
+          if (p.dataset.ffgFolded !== foldVal) p.dataset.ffgFolded = foldVal;
         }
+        const orderStr = String(order);
+        if (p.style.order !== orderStr) p.style.order = orderStr;
       }
-      if (topSet.size > 0) {
-        const topProps = allProps.filter(
-          (p) => {
-            var _a2;
-            return topSet.has((_a2 = p.dataset.propertyKey) != null ? _a2 : "");
-          }
-        );
-        if (topProps.length > 0) {
-          const orderedTop = orderByFieldOrder(topProps, this.settings.topZone.fieldOrder);
-          for (let i = orderedTop.length - 1; i >= 0; i--) {
-            mainParent.insertBefore(orderedTop[i], mainParent.firstChild);
-          }
-        }
-      }
+      this.ensureGroupHeaders(container, groups, groupMembers, state, knownGroupIds);
     } catch (e) {
       console.error("[FFG] processContainer error", e);
     }
   }
-  createWrapper(g, folded, container) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "ffg-group";
-    if (folded) wrapper.classList.add("ffg-folded");
-    wrapper.dataset.groupId = g.id;
+  clearGroupTagging(p) {
+    if (p.dataset.ffgGroup) delete p.dataset.ffgGroup;
+    if (p.dataset.ffgFolded) delete p.dataset.ffgFolded;
+  }
+  ensureGroupHeaders(container, groups, members, state, knownGroupIds) {
+    var _a, _b;
+    const propParent = this.findPropParent(container);
+    if (!propParent) return;
+    const existing = /* @__PURE__ */ new Map();
+    propParent.querySelectorAll(":scope > .ffg-group-header").forEach((h) => {
+      const id = h.dataset.groupId;
+      if (id) existing.set(id, h);
+    });
+    for (let k = 0; k < groups.length; k++) {
+      const g = groups[k];
+      const memberList = (_a = members.get(g.id)) != null ? _a : [];
+      if (memberList.length === 0) {
+        const stale = existing.get(g.id);
+        if (stale) stale.remove();
+        continue;
+      }
+      let header = existing.get(g.id);
+      if (!header) {
+        header = this.createGroupHeader(g, container);
+        propParent.appendChild(header);
+      }
+      const order = _FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_BASE + k * _FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_SIZE;
+      const orderStr = String(order);
+      if (header.style.order !== orderStr) header.style.order = orderStr;
+      const folded = (_b = state.get(g.id)) != null ? _b : g.defaultFolded;
+      const foldVal = folded ? "true" : "false";
+      if (header.dataset.folded !== foldVal) header.dataset.folded = foldVal;
+      const chevron = header.querySelector(".ffg-chevron");
+      if (chevron) {
+        const expected = folded ? "chevron-right" : "chevron-down";
+        if (chevron.dataset.iconState !== expected) {
+          (0, import_obsidian.setIcon)(chevron, expected);
+          chevron.dataset.iconState = expected;
+        }
+      }
+      const nameEl = header.querySelector(".ffg-name");
+      if (nameEl && nameEl.textContent !== g.name) nameEl.textContent = g.name;
+      const countEl = header.querySelector(".ffg-count");
+      if (countEl) {
+        const text = `(${memberList.length})`;
+        if (countEl.textContent !== text) countEl.textContent = text;
+      }
+    }
+    for (const [id, header] of existing) {
+      if (!knownGroupIds.has(id)) header.remove();
+    }
+  }
+  findPropParent(container) {
+    var _a;
+    const firstProp = container.querySelector(".metadata-property");
+    return (_a = firstProp == null ? void 0 : firstProp.parentElement) != null ? _a : null;
+  }
+  createGroupHeader(g, container) {
     const header = document.createElement("div");
     header.className = "ffg-group-header";
+    header.dataset.groupId = g.id;
     const chevron = document.createElement("span");
     chevron.className = "ffg-chevron";
-    (0, import_obsidian.setIcon)(chevron, folded ? "chevron-right" : "chevron-down");
+    (0, import_obsidian.setIcon)(chevron, "chevron-right");
+    chevron.dataset.iconState = "chevron-right";
     const name = document.createElement("span");
     name.className = "ffg-name";
     name.textContent = g.name;
@@ -330,9 +381,6 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
     header.appendChild(chevron);
     header.appendChild(name);
     header.appendChild(count);
-    const body = document.createElement("div");
-    body.className = "ffg-group-body";
-    if (folded) body.style.display = "none";
     const blockBubbling = (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -346,85 +394,57 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
-        const groupState = this.foldState.get(container);
-        if (!groupState) return;
-        const newFolded = !groupState.get(g.id);
-        groupState.set(g.id, newFolded);
-        body.style.display = newFolded ? "none" : "";
-        (0, import_obsidian.setIcon)(chevron, newFolded ? "chevron-right" : "chevron-down");
-        wrapper.classList.toggle("ffg-folded", newFolded);
+        this.toggleGroupFold(container, g.id);
       },
       true
     );
-    wrapper.appendChild(header);
-    wrapper.appendChild(body);
-    return wrapper;
+    return header;
   }
-  needsRegrouping(container, groups) {
-    var _a;
-    const allProps = Array.from(
-      container.querySelectorAll(".metadata-property")
-    );
-    const topSet = new Set(this.settings.topZone.fieldOrder);
-    for (const p of allProps) {
-      const key = (_a = p.dataset.propertyKey) != null ? _a : "";
-      let shouldBeIn = null;
-      if (!topSet.has(key)) {
-        for (const g of groups) {
-          if (g.matcher(key)) {
-            shouldBeIn = g.id;
-            break;
-          }
-        }
-      }
-      const inBody = p.closest(".ffg-group-body");
-      if (shouldBeIn === null) {
-        if (inBody) return true;
-      } else {
-        if (!inBody) return true;
-        const wrapper = inBody.closest(".ffg-group");
-        if ((wrapper == null ? void 0 : wrapper.dataset.groupId) !== shouldBeIn) return true;
-      }
-    }
-    if (topSet.size > 0) {
-      const topProps = allProps.filter((p) => {
-        var _a2;
-        return topSet.has((_a2 = p.dataset.propertyKey) != null ? _a2 : "");
+  toggleGroupFold(container, groupId) {
+    const state = this.foldState.get(container);
+    if (!state) return;
+    const newFolded = !state.get(groupId);
+    state.set(groupId, newFolded);
+    this.isProcessing = true;
+    try {
+      const foldVal = newFolded ? "true" : "false";
+      const escaped = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(groupId) : groupId;
+      container.querySelectorAll(
+        `.metadata-property[data-ffg-group="${escaped}"]`
+      ).forEach((p) => {
+        if (p.dataset.ffgFolded !== foldVal) p.dataset.ffgFolded = foldVal;
       });
-      if (topProps.length > 0) {
-        const ordered = orderByFieldOrder(topProps, this.settings.topZone.fieldOrder);
-        const parent = ordered[0].parentElement;
-        if (!parent) return true;
-        const topLevelProps = [];
-        for (const child of Array.from(parent.children)) {
-          if (child instanceof HTMLElement && child.classList.contains("metadata-property")) {
-            topLevelProps.push(child);
-            if (topLevelProps.length >= ordered.length) break;
-          }
-        }
-        for (let i = 0; i < ordered.length; i++) {
-          if (topLevelProps[i] !== ordered[i]) return true;
-        }
-      }
-    }
-    for (const g of groups) {
-      if (g.fieldOrder.length === 0) continue;
-      const wrapper = container.querySelector(
-        `.ffg-group[data-group-id="${g.id}"]`
+      const header = container.querySelector(
+        `.ffg-group-header[data-group-id="${escaped}"]`
       );
-      if (!wrapper) continue;
-      const body = wrapper.querySelector(".ffg-group-body");
-      if (!body) continue;
-      const groupProps = Array.from(body.querySelectorAll(".metadata-property"));
-      const ordered = orderByFieldOrder(groupProps, g.fieldOrder);
-      for (let i = 0; i < groupProps.length; i++) {
-        if (groupProps[i] !== ordered[i]) return true;
+      if (header) {
+        if (header.dataset.folded !== foldVal) header.dataset.folded = foldVal;
+        const chevron = header.querySelector(".ffg-chevron");
+        if (chevron) {
+          const expected = newFolded ? "chevron-right" : "chevron-down";
+          (0, import_obsidian.setIcon)(chevron, expected);
+          chevron.dataset.iconState = expected;
+        }
       }
+    } finally {
+      this.isProcessing = false;
     }
-    return false;
   }
-  unwrapAll() {
-    document.querySelectorAll(".ffg-group").forEach((wrapper) => this.unwrapOne(wrapper));
+  ensureAddButtonOrder(container) {
+    const addBtn = container.querySelector(".metadata-add-button");
+    if (!addBtn) return;
+    const orderStr = String(_FoldableFrontmatterGroupsPlugin.ADD_BUTTON_ORDER);
+    if (addBtn.style.order !== orderStr) addBtn.style.order = orderStr;
+  }
+  deactivate(container) {
+    container.classList.remove("ffg-active");
+    container.querySelectorAll(".ffg-group-header").forEach((h) => h.remove());
+    container.querySelectorAll(".metadata-property").forEach((p) => {
+      this.clearGroupTagging(p);
+      if (p.style.order) p.style.removeProperty("order");
+    });
+    const addBtn = container.querySelector(".metadata-add-button");
+    if (addBtn == null ? void 0 : addBtn.style.order) addBtn.style.removeProperty("order");
   }
   ensureSettingsGear(container) {
     const addBtn = container.querySelector(".metadata-add-button");
@@ -455,16 +475,6 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
       true
     );
     addBtn.appendChild(gear);
-  }
-  unwrapOne(wrapper) {
-    const body = wrapper.querySelector(".ffg-group-body");
-    const parent = wrapper.parentElement;
-    if (parent && body) {
-      Array.from(body.children).forEach((child) => {
-        parent.insertBefore(child, wrapper);
-      });
-    }
-    wrapper.remove();
   }
   // ── Canonical order + reconcile ─────────────────────────────────────────────
   computeCanonicalOrder(keys) {
@@ -546,6 +556,13 @@ var FoldableFrontmatterGroupsPlugin = class extends import_obsidian.Plugin {
     }
   }
 };
+// ── Virtual grouping (CSS-order based; no DOM moves) ───────────────────────
+_FoldableFrontmatterGroupsPlugin.TOP_BASE = 0;
+_FoldableFrontmatterGroupsPlugin.UNMATCHED_BASE = 1e4;
+_FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_BASE = 1e5;
+_FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_SIZE = 1e4;
+_FoldableFrontmatterGroupsPlugin.ADD_BUTTON_ORDER = 999999;
+var FoldableFrontmatterGroupsPlugin = _FoldableFrontmatterGroupsPlugin;
 var FrontmatterKeySuggest = class extends import_obsidian.AbstractInputSuggest {
   constructor(app, inputEl, onAccept, options = {}) {
     var _a;
@@ -668,7 +685,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
           id: Date.now().toString(36) + Math.random().toString(36).slice(2),
           name: "New Group",
           matcherType: "prefix",
-          matcherValue: "",
+          matcherValues: [],
           defaultFolded: true,
           fieldOrder: []
         });
