@@ -1,0 +1,9 @@
+{
+  "id": "foldable-frontmatter-groups",
+  "name": "Foldable Frontmatter Groups",
+  "version": "0.6.0-dev",
+  "minAppVersion": "1.4.0",
+  "description": "Adds collapsible group headers to the native Properties panel. v0.1 ships with two hardcoded groups (AI: ai_*, Hidden: _*).",
+  "author": "Chris Wagner",
+  "isDesktopOnly": false
+}
