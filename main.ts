@@ -407,6 +407,15 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // after layout-ready + first "resolved" (or a safety timer on warm starts).
   private indexReady = false;
   private metadataCacheInvalidationTimer: number | null = null;
+  // TEMPORARY startup-cost diagnostics (1.4.1-diag). Counts/times the hot paths
+  // during startup and dumps a Notice + console line a few seconds after load,
+  // so the dominant cost is visible on mobile without a console. Remove after.
+  private _diag = {
+    observerCalls: 0, observerMs: 0,
+    pacCalls: 0, pacMs: 0,
+    scanCalls: 0, scanMs: 0,
+    reconcileCalls: 0, reconcileMs: 0,
+  };
   private contextMenuBoundContainers = new WeakSet<HTMLElement>();
   // Reference to the settings tab so Properties-panel affordances (e.g. the
   // per-group settings icon) can drive navigation into the settings UI.
@@ -442,6 +451,9 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       // generous so it won't preempt a slow mobile cold-start index.
       this.registerEvent(this.app.metadataCache.on("resolved", markReady));
       window.setTimeout(markReady, 10000);
+
+      // TEMPORARY: dump startup-cost diagnostics once the dust settles.
+      window.setTimeout(() => this.dumpDiag(), 9000);
     });
 
     this.registerEvent(
@@ -990,6 +1002,8 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // the per-group cache on invalidation.
   private getAllVaultFrontmatterKeys(): Set<string> {
     if (this.allVaultKeysCache) return this.allVaultKeysCache;
+    const _t = performance.now();
+    this._diag.scanCalls++;
     const keys = new Set<string>();
     for (const file of this.app.vault.getMarkdownFiles()) {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
@@ -1000,6 +1014,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       }
     }
     this.allVaultKeysCache = keys;
+    this._diag.scanMs += performance.now() - _t;
     return keys;
   }
 
@@ -1192,42 +1207,65 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
 
   private installObserver() {
     this.observer = new MutationObserver((mutations) => {
-      if (this.isProcessing) return;
-
-      const containers = new Set<HTMLElement>();
-      for (const m of mutations) {
-        const target = m.target as Node;
-        if (target.nodeType === Node.ELEMENT_NODE) {
-          const el = target as HTMLElement;
-          const container = el.closest(".metadata-container") as HTMLElement | null;
-          if (container) containers.add(container);
-        }
-        m.addedNodes.forEach((node) => {
-          if (!(node instanceof HTMLElement)) return;
-          if (node.matches?.(".metadata-container")) containers.add(node);
-          node
-            .querySelectorAll?.<HTMLElement>(".metadata-container")
-            .forEach((c) => containers.add(c));
-        });
-      }
-
-      if (containers.size === 0) return;
-
-      this.isProcessing = true;
+      const _t = performance.now();
+      this._diag.observerCalls++;
       try {
-        containers.forEach((c) => {
-          if (c.isConnected) this.processContainer(c);
-        });
+        if (this.isProcessing) return;
+
+        const containers = new Set<HTMLElement>();
+        for (const m of mutations) {
+          const target = m.target as Node;
+          if (target.nodeType === Node.ELEMENT_NODE) {
+            const el = target as HTMLElement;
+            const container = el.closest(".metadata-container") as HTMLElement | null;
+            if (container) containers.add(container);
+          }
+          m.addedNodes.forEach((node) => {
+            if (!(node instanceof HTMLElement)) return;
+            if (node.matches?.(".metadata-container")) containers.add(node);
+            node
+              .querySelectorAll?.<HTMLElement>(".metadata-container")
+              .forEach((c) => containers.add(c));
+          });
+        }
+
+        if (containers.size === 0) return;
+
+        this.isProcessing = true;
+        try {
+          containers.forEach((c) => {
+            if (c.isConnected) this.processContainer(c);
+          });
+        } finally {
+          this.isProcessing = false;
+        }
       } finally {
-        this.isProcessing = false;
+        this._diag.observerMs += performance.now() - _t;
       }
     });
 
     this.observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  // TEMPORARY (1.4.1-diag): show where startup time went, as a Notice (so it's
+  // readable on mobile) + console. Remove once the hotspot is identified.
+  private dumpDiag() {
+    const d = this._diag;
+    const r = (n: number) => Math.round(n);
+    const msg =
+      `FFG startup diag\n` +
+      `observer: ${d.observerCalls}× / ${r(d.observerMs)}ms\n` +
+      `processAll: ${d.pacCalls}× / ${r(d.pacMs)}ms\n` +
+      `vault scan: ${d.scanCalls}× / ${r(d.scanMs)}ms\n` +
+      `reconcile: ${d.reconcileCalls}× / ${r(d.reconcileMs)}ms`;
+    console.log("[FFG][diag]", JSON.stringify(d));
+    new Notice(msg, 60000);
+  }
+
   private processAllContainers() {
     if (this.isProcessing) return;
+    const _t = performance.now();
+    this._diag.pacCalls++;
     this.isProcessing = true;
     try {
       document
@@ -1235,6 +1273,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         .forEach((c) => this.processContainer(c));
     } finally {
       this.isProcessing = false;
+      this._diag.pacMs += performance.now() - _t;
     }
   }
 
@@ -3180,6 +3219,8 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   ): Promise<"rewrote" | "noop" | "no-frontmatter" | "error" | "skipped"> {
     if (!file || file.extension !== "md") return "skipped";
 
+    const _tRecon = performance.now();
+    this._diag.reconcileCalls++;
     try {
       let outcome: "rewrote" | "noop" | "no-frontmatter" = "no-frontmatter";
 
@@ -3305,6 +3346,8 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     } catch (e) {
       console.error("[FFG] reconcileFrontmatter error", file.path, e);
       return "error";
+    } finally {
+      this._diag.reconcileMs += performance.now() - _tRecon;
     }
   }
 }
