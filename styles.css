@@ -1951,3 +1951,15 @@ button.ffg-cleanup-nuke:disabled,
 .metadata-properties-heading.ffg-excluded-heading {
   display: none !important;
 }
+
+/* Stale-view indicator: orange refresh button when disk content diverged from
+   the open view and the user hasn't reloaded yet. Click to sync from disk. */
+.ffg-settings-refresh.ffg-stale {
+  color: var(--color-orange, #e8a958) !important;
+  animation: ffg-stale-pulse 2s ease-in-out infinite;
+}
+
+@keyframes ffg-stale-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

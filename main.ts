@@ -403,7 +403,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   settingTab: FfgSettingTab | null = null;
 
   async onload() {
-    console.log("[FFG] loading v1.1-dev");
+    console.log("[FFG] loading v1.4.0");
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -498,6 +498,29 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         window.setTimeout(() => {
           void this.reconcileFrontmatter(file);
         }, 0);
+      })
+    );
+
+    // When an open file is modified externally, check shortly after whether
+    // the open view's content still diverges from disk (Obsidian sometimes
+    // misses the reload). If stale, reload the view from disk.
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (!(file instanceof TFile) || file.extension !== "md") return;
+        if (!this.isFileOpenInAnyLeaf(file)) return;
+        const tModify = performance.now();
+        // Snapshot view content now. If the view changes before the check
+        // fires, the user is actively editing and we must not clobber their work.
+        const viewSnapshot = new Map<object, string>();
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          const view = leaf.view as unknown as { file?: TFile; getViewData?: () => string };
+          if (view?.file === file && typeof view.getViewData === "function") {
+            viewSnapshot.set(leaf, view.getViewData());
+          }
+        });
+        window.setTimeout(() => {
+          void this.checkAndFixStaleView(file, tModify, viewSnapshot);
+        }, 500);
       })
     );
 
@@ -1766,7 +1789,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     // into a folder that has a template. Then re-render grouping.
     const refresh = document.createElement("div");
     refresh.className = "ffg-settings-gear ffg-settings-refresh";
-    refresh.setAttribute("aria-label", "Apply template defaults & lint to this file");
+    refresh.setAttribute("aria-label", "Reconcile and reload this file from disk");
     refresh.setAttribute("role", "button");
     setIcon(refresh, "refresh-cw");
     refresh.addEventListener("mousedown", stopAll, true);
@@ -1819,10 +1842,119 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     const result = await this.reconcileFrontmatter(file);
     this.invalidateWildcardCache();
     this.processAllContainers();
-    if (result === "rewrote") new Notice("[FFG] Frontmatter updated");
+    const bodyReloaded = await this.reloadOpenViewsFromDisk(file);
+    this.markRefreshButtonStale(file, false);
+    if (bodyReloaded) new Notice("[FFG] Reloaded from disk");
+    else if (result === "rewrote") new Notice("[FFG] Frontmatter updated");
     else if (result === "noop") new Notice("[FFG] Already up to date");
     else if (result === "no-frontmatter") new Notice("[FFG] No frontmatter");
     else if (result === "error") new Notice("[FFG] Error, see console");
+  }
+
+  // Pull the latest content from disk into any open view showing this file,
+  // when the view's content has diverged from disk (the "stale open file"
+  // case where Obsidian missed an external modify). Uses setViewData (the
+  // load path), preserving cursor/scroll. Discards any unsaved buffer for
+  // this file by design — this is a deliberate "reload from disk" action.
+  private async reloadOpenViewsFromDisk(file: TFile): Promise<boolean> {
+    let reloaded = false;
+    let disk: string;
+    try {
+      disk = await this.app.vault.read(file);
+    } catch (e) {
+      console.error("[FFG] reloadOpenViewsFromDisk read error", file.path, e);
+      return false;
+    }
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as unknown as {
+        file?: TFile;
+        getViewData?: () => string;
+        setViewData?: (data: string, clear: boolean) => void;
+        getEphemeralState?: () => unknown;
+        setEphemeralState?: (state: unknown) => void;
+      };
+      if (
+        !view ||
+        view.file !== file ||
+        typeof view.getViewData !== "function" ||
+        typeof view.setViewData !== "function"
+      ) {
+        return;
+      }
+      if (view.getViewData() === disk) return;
+      const eState =
+        typeof view.getEphemeralState === "function"
+          ? view.getEphemeralState()
+          : null;
+      view.setViewData(disk, false);
+      if (eState && typeof view.setEphemeralState === "function") {
+        view.setEphemeralState(eState);
+      }
+      reloaded = true;
+    });
+    return reloaded;
+  }
+
+  // True if the file is currently shown in any open leaf.
+  private isFileOpenInAnyLeaf(file: TFile): boolean {
+    let open = false;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as unknown as { file?: TFile };
+      if (view && view.file === file) open = true;
+    });
+    return open;
+  }
+
+  // After an external modify of an open file, check whether the view's
+  // content diverges from disk. If stale, reload from disk (Obsidian
+  // sometimes misses the notify for external writes). Discards any unsaved
+  // buffer by design — disk wins.
+  private async checkAndFixStaleView(file: TFile, tModify: number, viewSnapshot: Map<object, string>) {
+    let disk: string;
+    try {
+      disk = await this.app.vault.read(file);
+    } catch {
+      return;
+    }
+    let staleDetected = false;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view as unknown as {
+        file?: TFile;
+        getViewData?: () => string;
+      };
+      if (!view || view.file !== file || typeof view.getViewData !== "function") {
+        return;
+      }
+      const shown = view.getViewData();
+      if (shown === disk) return;
+      // If the view content changed since the modify event, the user is actively
+      // editing (typed more, backspaced, etc) — skip.
+      const snapshot = viewSnapshot.get(leaf);
+      if (snapshot !== undefined && shown !== snapshot) return;
+      console.warn("[FFG] stale view detected after external modify", {
+        path: file.path,
+        diskLen: disk.length,
+        shownLen: shown.length,
+        msSinceModify: Math.round(performance.now() - tModify),
+        activeFile: this.app.workspace.getActiveFile()?.path ?? null,
+      });
+      staleDetected = true;
+    });
+    if (staleDetected) {
+      this.markRefreshButtonStale(file, true);
+    }
+  }
+
+  // Highlight (or clear) the refresh button for all open panels showing this
+  // file, signalling that the view may be out of date with disk.
+  private markRefreshButtonStale(file: TFile, stale: boolean) {
+    document.querySelectorAll<HTMLElement>(".ffg-settings-refresh").forEach((btn) => {
+      const container = btn.closest(".metadata-container") as HTMLElement | null;
+      if (!container) return;
+      if (this.fileForContainer(container) === file) {
+        btn.classList.toggle("ffg-stale", stale);
+      }
+    });
   }
 
   // Open the plugin's settings, switch to the Grouping tab, expand the given

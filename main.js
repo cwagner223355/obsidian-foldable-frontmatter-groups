@@ -235,7 +235,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     this.settingTab = null;
   }
   async onload() {
-    console.log("[FFG] loading v1.1-dev");
+    console.log("[FFG] loading v1.4.0");
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -317,6 +317,23 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         window.setTimeout(() => {
           void this.reconcileFrontmatter(file);
         }, 0);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (!(file instanceof import_obsidian.TFile) || file.extension !== "md") return;
+        if (!this.isFileOpenInAnyLeaf(file)) return;
+        const tModify = performance.now();
+        const viewSnapshot = /* @__PURE__ */ new Map();
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          const view = leaf.view;
+          if ((view == null ? void 0 : view.file) === file && typeof view.getViewData === "function") {
+            viewSnapshot.set(leaf, view.getViewData());
+          }
+        });
+        window.setTimeout(() => {
+          void this.checkAndFixStaleView(file, tModify, viewSnapshot);
+        }, 500);
       })
     );
     this.registerEvent(
@@ -1324,7 +1341,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     actions.className = "ffg-panel-actions";
     const refresh = document.createElement("div");
     refresh.className = "ffg-settings-gear ffg-settings-refresh";
-    refresh.setAttribute("aria-label", "Apply template defaults & lint to this file");
+    refresh.setAttribute("aria-label", "Reconcile and reload this file from disk");
     refresh.setAttribute("role", "button");
     (0, import_obsidian.setIcon)(refresh, "refresh-cw");
     refresh.addEventListener("mousedown", stopAll, true);
@@ -1372,10 +1389,97 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     const result = await this.reconcileFrontmatter(file);
     this.invalidateWildcardCache();
     this.processAllContainers();
-    if (result === "rewrote") new import_obsidian.Notice("[FFG] Frontmatter updated");
+    const bodyReloaded = await this.reloadOpenViewsFromDisk(file);
+    this.markRefreshButtonStale(file, false);
+    if (bodyReloaded) new import_obsidian.Notice("[FFG] Reloaded from disk");
+    else if (result === "rewrote") new import_obsidian.Notice("[FFG] Frontmatter updated");
     else if (result === "noop") new import_obsidian.Notice("[FFG] Already up to date");
     else if (result === "no-frontmatter") new import_obsidian.Notice("[FFG] No frontmatter");
     else if (result === "error") new import_obsidian.Notice("[FFG] Error, see console");
+  }
+  // Pull the latest content from disk into any open view showing this file,
+  // when the view's content has diverged from disk (the "stale open file"
+  // case where Obsidian missed an external modify). Uses setViewData (the
+  // load path), preserving cursor/scroll. Discards any unsaved buffer for
+  // this file by design — this is a deliberate "reload from disk" action.
+  async reloadOpenViewsFromDisk(file) {
+    let reloaded = false;
+    let disk;
+    try {
+      disk = await this.app.vault.read(file);
+    } catch (e) {
+      console.error("[FFG] reloadOpenViewsFromDisk read error", file.path, e);
+      return false;
+    }
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view;
+      if (!view || view.file !== file || typeof view.getViewData !== "function" || typeof view.setViewData !== "function") {
+        return;
+      }
+      if (view.getViewData() === disk) return;
+      const eState = typeof view.getEphemeralState === "function" ? view.getEphemeralState() : null;
+      view.setViewData(disk, false);
+      if (eState && typeof view.setEphemeralState === "function") {
+        view.setEphemeralState(eState);
+      }
+      reloaded = true;
+    });
+    return reloaded;
+  }
+  // True if the file is currently shown in any open leaf.
+  isFileOpenInAnyLeaf(file) {
+    let open = false;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const view = leaf.view;
+      if (view && view.file === file) open = true;
+    });
+    return open;
+  }
+  // After an external modify of an open file, check whether the view's
+  // content diverges from disk. If stale, reload from disk (Obsidian
+  // sometimes misses the notify for external writes). Discards any unsaved
+  // buffer by design — disk wins.
+  async checkAndFixStaleView(file, tModify, viewSnapshot) {
+    let disk;
+    try {
+      disk = await this.app.vault.read(file);
+    } catch (e) {
+      return;
+    }
+    let staleDetected = false;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      var _a, _b;
+      const view = leaf.view;
+      if (!view || view.file !== file || typeof view.getViewData !== "function") {
+        return;
+      }
+      const shown = view.getViewData();
+      if (shown === disk) return;
+      const snapshot = viewSnapshot.get(leaf);
+      if (snapshot !== void 0 && shown !== snapshot) return;
+      console.warn("[FFG] stale view detected after external modify", {
+        path: file.path,
+        diskLen: disk.length,
+        shownLen: shown.length,
+        msSinceModify: Math.round(performance.now() - tModify),
+        activeFile: (_b = (_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.path) != null ? _b : null
+      });
+      staleDetected = true;
+    });
+    if (staleDetected) {
+      this.markRefreshButtonStale(file, true);
+    }
+  }
+  // Highlight (or clear) the refresh button for all open panels showing this
+  // file, signalling that the view may be out of date with disk.
+  markRefreshButtonStale(file, stale) {
+    document.querySelectorAll(".ffg-settings-refresh").forEach((btn) => {
+      const container = btn.closest(".metadata-container");
+      if (!container) return;
+      if (this.fileForContainer(container) === file) {
+        btn.classList.toggle("ffg-stale", stale);
+      }
+    });
   }
   // Open the plugin's settings, switch to the Grouping tab, expand the given
   // group, then unfold + scroll to the template that matches the current
