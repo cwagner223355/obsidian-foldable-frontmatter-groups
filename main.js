@@ -234,7 +234,9 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       scanCalls: 0,
       scanMs: 0,
       reconcileCalls: 0,
-      reconcileMs: 0
+      reconcileMs: 0,
+      createCalls: 0,
+      createMs: 0
     };
     this.contextMenuBoundContainers = /* @__PURE__ */ new WeakSet();
     // Reference to the settings tab so Properties-panel affordances (e.g. the
@@ -250,6 +252,15 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       this.processAllContainers();
       this.lastActiveFile = this.app.workspace.getActiveFile();
       this.installObserver();
+      this.registerEvent(
+        this.app.vault.on("create", (file) => {
+          if (!this.app.workspace.layoutReady) return;
+          if (file instanceof import_obsidian.TFile && file.extension === "md") {
+            if (this.isFileExcludedFromReconcile(file.path)) return;
+            void this.applyDefaultsOnCreate(file);
+          }
+        })
+      );
       const markReady = () => {
         if (this.indexReady) return;
         this.indexReady = true;
@@ -306,14 +317,6 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         else if (result === "error") new import_obsidian.Notice("[FFG] Error, see console");
       }
     });
-    this.registerEvent(
-      this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian.TFile && file.extension === "md") {
-          if (this.isFileExcludedFromReconcile(file.path)) return;
-          void this.applyDefaultsOnCreate(file);
-        }
-      })
-    );
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         if (!(file instanceof import_obsidian.TFile) || file.extension !== "md") return;
@@ -921,7 +924,8 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
 observer: ${d.observerCalls}\xD7 / ${r(d.observerMs)}ms
 processAll: ${d.pacCalls}\xD7 / ${r(d.pacMs)}ms
 vault scan: ${d.scanCalls}\xD7 / ${r(d.scanMs)}ms
-reconcile: ${d.reconcileCalls}\xD7 / ${r(d.reconcileMs)}ms`;
+reconcile: ${d.reconcileCalls}\xD7 / ${r(d.reconcileMs)}ms
+create: ${d.createCalls}\xD7 / ${r(d.createMs)}ms`;
     console.log("[FFG][diag]", JSON.stringify(d));
     new import_obsidian.Notice(msg, 6e4);
   }
@@ -1744,17 +1748,23 @@ reconcile: ${d.reconcileCalls}\xD7 / ${r(d.reconcileMs)}ms`;
   }
   async applyDefaultsOnCreate(file) {
     if (file.extension !== "md") return;
-    const defaults = this.computeDefaultsForFile(file.path);
-    if (defaults.size > 0) {
-      try {
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
-          this.applyDefaultsToFm(fm, defaults);
-        });
-      } catch (e) {
-        console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
+    const _t = performance.now();
+    this._diag.createCalls++;
+    try {
+      const defaults = this.computeDefaultsForFile(file.path);
+      if (defaults.size > 0) {
+        try {
+          await this.app.fileManager.processFrontMatter(file, (fm) => {
+            this.applyDefaultsToFm(fm, defaults);
+          });
+        } catch (e) {
+          console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
+        }
       }
+      await this.maybeInsertBodyTemplate(file);
+    } finally {
+      this._diag.createMs += performance.now() - _t;
     }
-    await this.maybeInsertBodyTemplate(file);
   }
   // Longest matching prefix among any folderTemplate; ties broken by settings order
   // (later entries override earlier when prefix length is equal).

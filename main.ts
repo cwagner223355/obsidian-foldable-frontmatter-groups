@@ -415,6 +415,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     pacCalls: 0, pacMs: 0,
     scanCalls: 0, scanMs: 0,
     reconcileCalls: 0, reconcileMs: 0,
+    createCalls: 0, createMs: 0,
   };
   private contextMenuBoundContainers = new WeakSet<HTMLElement>();
   // Reference to the settings tab so Properties-panel affordances (e.g. the
@@ -433,6 +434,21 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       this.processAllContainers();
       this.lastActiveFile = this.app.workspace.getActiveFile();
       this.installObserver();
+
+      // Register the create handler HERE, not in onload. Obsidian fires
+      // vault "create" for every existing file during vault init; registering
+      // in onload would run applyDefaultsOnCreate (frontmatter writes + a full
+      // vault.read for body templates) across the whole vault at startup. The
+      // layoutReady guard is belt-and-suspenders against any same-tick storm.
+      this.registerEvent(
+        this.app.vault.on("create", (file) => {
+          if (!this.app.workspace.layoutReady) return;
+          if (file instanceof TFile && file.extension === "md") {
+            if (this.isFileExcludedFromReconcile(file.path)) return;
+            void this.applyDefaultsOnCreate(file);
+          }
+        })
+      );
 
       // Flip indexReady once the initial vault index settles, then do one
       // expansion + repaint so wildcard groups pick up the full key universe.
@@ -506,15 +522,6 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         else if (result === "error") new Notice("[FFG] Error, see console");
       },
     });
-
-    this.registerEvent(
-      this.app.vault.on("create", (file) => {
-        if (file instanceof TFile && file.extension === "md") {
-          if (this.isFileExcludedFromReconcile(file.path)) return;
-          void this.applyDefaultsOnCreate(file);
-        }
-      })
-    );
 
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
@@ -1257,7 +1264,8 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       `observer: ${d.observerCalls}× / ${r(d.observerMs)}ms\n` +
       `processAll: ${d.pacCalls}× / ${r(d.pacMs)}ms\n` +
       `vault scan: ${d.scanCalls}× / ${r(d.scanMs)}ms\n` +
-      `reconcile: ${d.reconcileCalls}× / ${r(d.reconcileMs)}ms`;
+      `reconcile: ${d.reconcileCalls}× / ${r(d.reconcileMs)}ms\n` +
+      `create: ${d.createCalls}× / ${r(d.createMs)}ms`;
     console.log("[FFG][diag]", JSON.stringify(d));
     new Notice(msg, 60000);
   }
@@ -2296,17 +2304,23 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
 
   async applyDefaultsOnCreate(file: TFile) {
     if (file.extension !== "md") return;
-    const defaults = this.computeDefaultsForFile(file.path);
-    if (defaults.size > 0) {
-      try {
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
-          this.applyDefaultsToFm(fm, defaults);
-        });
-      } catch (e) {
-        console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
+    const _t = performance.now();
+    this._diag.createCalls++;
+    try {
+      const defaults = this.computeDefaultsForFile(file.path);
+      if (defaults.size > 0) {
+        try {
+          await this.app.fileManager.processFrontMatter(file, (fm) => {
+            this.applyDefaultsToFm(fm, defaults);
+          });
+        } catch (e) {
+          console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
+        }
       }
+      await this.maybeInsertBodyTemplate(file);
+    } finally {
+      this._diag.createMs += performance.now() - _t;
     }
-    await this.maybeInsertBodyTemplate(file);
   }
 
   // Longest matching prefix among any folderTemplate; ties broken by settings order
