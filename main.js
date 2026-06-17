@@ -229,7 +229,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     this.settingTab = null;
   }
   async onload() {
-    console.log("[FFG] loading v1.4.0");
+    console.log("[FFG] loading v1.4.1");
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
