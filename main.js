@@ -124,22 +124,6 @@ function compileGroupMatcher(g) {
     return false;
   };
 }
-function computeGroupWildcardKeys(g, app) {
-  var _a;
-  const matches = compileGroupMatcher(g);
-  if (!matches) return [];
-  const matched = /* @__PURE__ */ new Set();
-  for (const file of app.vault.getMarkdownFiles()) {
-    const fm = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
-    if (!fm) continue;
-    for (const k of Object.keys(fm)) {
-      if (!k || k === "position") continue;
-      if (matched.has(k)) continue;
-      if (matches(k)) matched.add(k);
-    }
-  }
-  return Array.from(matched).sort();
-}
 function sortTemplatesByGroupingOrder(templates, groups) {
   const groupIndex = new Map(groups.map((g, i) => [g.id, i]));
   const naturalIndex = new Map(templates.map((t, i) => [t.id, i]));
@@ -228,6 +212,16 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     // miss without explicit cleanup. Cleared wholesale on saveSettings and on
     // metadataCache changes (debounced).
     this.wildcardExpansionCache = /* @__PURE__ */ new Map();
+    // Single cached scan of every frontmatter key in the vault. All per-group
+    // wildcard expansion filters this set instead of re-scanning all files per
+    // group (the old hot path cost N full vault scans). Rebuilt on invalidation.
+    this.allVaultKeysCache = null;
+    // Gates metadataCache "changed" invalidation until the initial vault index
+    // has settled. During cold start the cache fires for thousands of files; left
+    // ungated it nukes the wildcard cache repeatedly and forces the panel to
+    // re-scan the whole vault mid-load (the mobile 3s stall). Flipped true once
+    // after layout-ready + first "resolved" (or a safety timer on warm starts).
+    this.indexReady = false;
     this.metadataCacheInvalidationTimer = null;
     this.contextMenuBoundContainers = /* @__PURE__ */ new WeakSet();
     // Reference to the settings tab so Properties-panel affordances (e.g. the
@@ -239,10 +233,18 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
-    this.installObserver();
     this.app.workspace.onLayoutReady(() => {
       this.processAllContainers();
       this.lastActiveFile = this.app.workspace.getActiveFile();
+      this.installObserver();
+      const markReady = () => {
+        if (this.indexReady) return;
+        this.indexReady = true;
+        this.invalidateWildcardCache();
+        this.processAllContainers();
+      };
+      this.registerEvent(this.app.metadataCache.on("resolved", markReady));
+      window.setTimeout(markReady, 1e4);
     });
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
@@ -338,6 +340,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     );
     this.registerEvent(
       this.app.metadataCache.on("changed", () => {
+        if (!this.indexReady) return;
         if (this.metadataCacheInvalidationTimer !== null) {
           window.clearTimeout(this.metadataCacheInvalidationTimer);
         }
@@ -654,9 +657,38 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     const key = g.id + "|" + g.matcherType + "|" + ((_a = g.matcherValues) != null ? _a : []).join(",");
     let cached = this.wildcardExpansionCache.get(key);
     if (cached) return cached;
-    cached = computeGroupWildcardKeys(g, this.app);
+    const matches = compileGroupMatcher(g);
+    if (!matches) {
+      cached = [];
+    } else {
+      const matched = [];
+      for (const k of this.getAllVaultFrontmatterKeys()) {
+        if (matches(k)) matched.push(k);
+      }
+      matched.sort();
+      cached = matched;
+    }
     this.wildcardExpansionCache.set(key, cached);
     return cached;
+  }
+  // The universe of frontmatter keys in the vault, scanned once and cached.
+  // Per-group wildcard expansion filters this set, so the expensive vault walk
+  // happens once total rather than once per wildcard group. Cleared alongside
+  // the per-group cache on invalidation.
+  getAllVaultFrontmatterKeys() {
+    var _a;
+    if (this.allVaultKeysCache) return this.allVaultKeysCache;
+    const keys = /* @__PURE__ */ new Set();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const fm = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
+      if (!fm) continue;
+      for (const k of Object.keys(fm)) {
+        if (!k || k === "position") continue;
+        keys.add(k);
+      }
+    }
+    this.allVaultKeysCache = keys;
+    return keys;
   }
   // Drop-in replacement for free-function getGroupEffectiveFields that uses
   // the plugin's wildcard cache. Use this anywhere group → field expansion
@@ -675,6 +707,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   }
   invalidateWildcardCache() {
     this.wildcardExpansionCache.clear();
+    this.allVaultKeysCache = null;
   }
   // True if this file is on the user's auto-reconcile exclude list, or if the
   // "Auto-exclude folder notes" toggle is on and the file is a folder note
