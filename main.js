@@ -223,28 +223,13 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     // after layout-ready + first "resolved" (or a safety timer on warm starts).
     this.indexReady = false;
     this.metadataCacheInvalidationTimer = null;
-    // TEMPORARY startup-cost diagnostics (1.4.1-diag). Counts/times the hot paths
-    // during startup and dumps a Notice + console line a few seconds after load,
-    // so the dominant cost is visible on mobile without a console. Remove after.
-    this._diag = {
-      observerCalls: 0,
-      observerMs: 0,
-      pacCalls: 0,
-      pacMs: 0,
-      scanCalls: 0,
-      scanMs: 0,
-      reconcileCalls: 0,
-      reconcileMs: 0,
-      createCalls: 0,
-      createMs: 0
-    };
     this.contextMenuBoundContainers = /* @__PURE__ */ new WeakSet();
     // Reference to the settings tab so Properties-panel affordances (e.g. the
     // per-group settings icon) can drive navigation into the settings UI.
     this.settingTab = null;
   }
   async onload() {
-    console.log("[FFG] loading v1.4.1");
+    console.log("[FFG] loading v1.4.2");
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -269,7 +254,6 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       };
       this.registerEvent(this.app.metadataCache.on("resolved", markReady));
       window.setTimeout(markReady, 1e4);
-      window.setTimeout(() => this.dumpDiag(), 9e3);
     });
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
@@ -695,8 +679,6 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   getAllVaultFrontmatterKeys() {
     var _a;
     if (this.allVaultKeysCache) return this.allVaultKeysCache;
-    const _t = performance.now();
-    this._diag.scanCalls++;
     const keys = /* @__PURE__ */ new Set();
     for (const file of this.app.vault.getMarkdownFiles()) {
       const fm = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
@@ -707,7 +689,6 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       }
     }
     this.allVaultKeysCache = keys;
-    this._diag.scanMs += performance.now() - _t;
     return keys;
   }
   // Drop-in replacement for free-function getGroupEffectiveFields that uses
@@ -881,64 +862,41 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   }
   installObserver() {
     this.observer = new MutationObserver((mutations) => {
-      const _t = performance.now();
-      this._diag.observerCalls++;
+      if (this.isProcessing) return;
+      const containers = /* @__PURE__ */ new Set();
+      for (const m of mutations) {
+        const target = m.target;
+        if (target.nodeType === Node.ELEMENT_NODE) {
+          const el = target;
+          const container = el.closest(".metadata-container");
+          if (container) containers.add(container);
+        }
+        m.addedNodes.forEach((node) => {
+          var _a, _b;
+          if (!(node instanceof HTMLElement)) return;
+          if ((_a = node.matches) == null ? void 0 : _a.call(node, ".metadata-container")) containers.add(node);
+          (_b = node.querySelectorAll) == null ? void 0 : _b.call(node, ".metadata-container").forEach((c) => containers.add(c));
+        });
+      }
+      if (containers.size === 0) return;
+      this.isProcessing = true;
       try {
-        if (this.isProcessing) return;
-        const containers = /* @__PURE__ */ new Set();
-        for (const m of mutations) {
-          const target = m.target;
-          if (target.nodeType === Node.ELEMENT_NODE) {
-            const el = target;
-            const container = el.closest(".metadata-container");
-            if (container) containers.add(container);
-          }
-          m.addedNodes.forEach((node) => {
-            var _a, _b;
-            if (!(node instanceof HTMLElement)) return;
-            if ((_a = node.matches) == null ? void 0 : _a.call(node, ".metadata-container")) containers.add(node);
-            (_b = node.querySelectorAll) == null ? void 0 : _b.call(node, ".metadata-container").forEach((c) => containers.add(c));
-          });
-        }
-        if (containers.size === 0) return;
-        this.isProcessing = true;
-        try {
-          containers.forEach((c) => {
-            if (c.isConnected) this.processContainer(c);
-          });
-        } finally {
-          this.isProcessing = false;
-        }
+        containers.forEach((c) => {
+          if (c.isConnected) this.processContainer(c);
+        });
       } finally {
-        this._diag.observerMs += performance.now() - _t;
+        this.isProcessing = false;
       }
     });
     this.observer.observe(document.body, { childList: true, subtree: true });
   }
-  // TEMPORARY (1.4.1-diag): show where startup time went, as a Notice (so it's
-  // readable on mobile) + console. Remove once the hotspot is identified.
-  dumpDiag() {
-    const d = this._diag;
-    const r = (n) => Math.round(n);
-    const msg = `FFG startup diag
-observer: ${d.observerCalls}\xD7 / ${r(d.observerMs)}ms
-processAll: ${d.pacCalls}\xD7 / ${r(d.pacMs)}ms
-vault scan: ${d.scanCalls}\xD7 / ${r(d.scanMs)}ms
-reconcile: ${d.reconcileCalls}\xD7 / ${r(d.reconcileMs)}ms
-create: ${d.createCalls}\xD7 / ${r(d.createMs)}ms`;
-    console.log("[FFG][diag]", JSON.stringify(d));
-    new import_obsidian.Notice(msg, 6e4);
-  }
   processAllContainers() {
     if (this.isProcessing) return;
-    const _t = performance.now();
-    this._diag.pacCalls++;
     this.isProcessing = true;
     try {
       document.querySelectorAll(".metadata-container").forEach((c) => this.processContainer(c));
     } finally {
       this.isProcessing = false;
-      this._diag.pacMs += performance.now() - _t;
     }
   }
   processContainer(container) {
@@ -1748,23 +1706,17 @@ create: ${d.createCalls}\xD7 / ${r(d.createMs)}ms`;
   }
   async applyDefaultsOnCreate(file) {
     if (file.extension !== "md") return;
-    const _t = performance.now();
-    this._diag.createCalls++;
-    try {
-      const defaults = this.computeDefaultsForFile(file.path);
-      if (defaults.size > 0) {
-        try {
-          await this.app.fileManager.processFrontMatter(file, (fm) => {
-            this.applyDefaultsToFm(fm, defaults);
-          });
-        } catch (e) {
-          console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
-        }
+    const defaults = this.computeDefaultsForFile(file.path);
+    if (defaults.size > 0) {
+      try {
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          this.applyDefaultsToFm(fm, defaults);
+        });
+      } catch (e) {
+        console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
       }
-      await this.maybeInsertBodyTemplate(file);
-    } finally {
-      this._diag.createMs += performance.now() - _t;
     }
+    await this.maybeInsertBodyTemplate(file);
   }
   // Longest matching prefix among any folderTemplate; ties broken by settings order
   // (later entries override earlier when prefix length is equal).
@@ -2522,8 +2474,6 @@ create: ${d.createCalls}\xD7 / ${r(d.createMs)}ms`;
   async reconcileFrontmatter(file) {
     var _a, _b;
     if (!file || file.extension !== "md") return "skipped";
-    const _tRecon = performance.now();
-    this._diag.reconcileCalls++;
     try {
       let outcome = "no-frontmatter";
       const defaults = this.computeDefaultsForFile(file.path);
@@ -2624,8 +2574,6 @@ create: ${d.createCalls}\xD7 / ${r(d.createMs)}ms`;
     } catch (e) {
       console.error("[FFG] reconcileFrontmatter error", file.path, e);
       return "error";
-    } finally {
-      this._diag.reconcileMs += performance.now() - _tRecon;
     }
   }
 };

@@ -1,6 +1,6 @@
 {
   "name": "foldable-frontmatter-groups",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Adds collapsible group headers to the native Properties panel.",
   "main": "main.js",
   "scripts": {
