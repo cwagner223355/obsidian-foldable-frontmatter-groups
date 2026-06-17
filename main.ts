@@ -413,7 +413,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   settingTab: FfgSettingTab | null = null;
 
   async onload() {
-    console.log("[FFG] loading v1.4.2");
+    console.log("[FFG] loading v1.4.3");
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -2274,6 +2274,17 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       }
     }
     await this.maybeInsertBodyTemplate(file);
+
+    // A freshly created note's Properties panel renders only after these
+    // writes land. The MutationObserver can miss that render when it coincides
+    // with an in-flight process pass (mutations arriving while isProcessing is
+    // true are dropped), which leaves the gear/refresh buttons un-injected
+    // until a manual close/reopen. Nudge a reprocess so they appear on their
+    // own. Idempotent (ensureSettingsGear no-ops if already present); two
+    // attempts cover mobile render lag. Only fires for genuine post-layout
+    // creates, so it doesn't reintroduce any startup cost.
+    window.setTimeout(() => this.processAllContainers(), 100);
+    window.setTimeout(() => this.processAllContainers(), 600);
   }
 
   // Longest matching prefix among any folderTemplate; ties broken by settings order

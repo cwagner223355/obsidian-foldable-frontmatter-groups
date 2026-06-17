@@ -229,7 +229,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     this.settingTab = null;
   }
   async onload() {
-    console.log("[FFG] loading v1.4.2");
+    console.log("[FFG] loading v1.4.3");
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -1717,6 +1717,8 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       }
     }
     await this.maybeInsertBodyTemplate(file);
+    window.setTimeout(() => this.processAllContainers(), 100);
+    window.setTimeout(() => this.processAllContainers(), 600);
   }
   // Longest matching prefix among any folderTemplate; ties broken by settings order
   // (later entries override earlier when prefix length is equal).
