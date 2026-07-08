@@ -227,9 +227,18 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     // Reference to the settings tab so Properties-panel affordances (e.g. the
     // per-group settings icon) can drive navigation into the settings UI.
     this.settingTab = null;
+    // Debounced persistence for per-keystroke settings inputs (template names,
+    // path prefixes, icon names, seed values). Fires once, 400ms after the last
+    // keystroke, so typing doesn't trigger a data.json write + wildcard-cache
+    // invalidation + full panel reprocess per character. Toggles and buttons
+    // still call saveSettings() directly.
+    this.saveSettingsDebounced = (0, import_obsidian.debounce)(() => void this.saveSettings(), 400, true);
+    // Timers that must not fire after unload (they would repaint or reconcile
+    // on a dead plugin). Cleared wholesale in onunload.
+    this.pendingTimers = /* @__PURE__ */ new Set();
   }
   async onload() {
-    console.log("[FFG] loading v1.4.3");
+    console.log(`[FFG] loading v${this.manifest.version}`);
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -253,7 +262,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         this.processAllContainers();
       };
       this.registerEvent(this.app.metadataCache.on("resolved", markReady));
-      window.setTimeout(markReady, 1e4);
+      this.scheduleTimeout(markReady, 1e4);
     });
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
@@ -317,7 +326,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         if (!this.settings.reconcileOnLeave) return;
         if (!this.settings.groupFoldingEnabled) return;
         if (this.isFileExcludedFromReconcile(file.path)) return;
-        window.setTimeout(() => {
+        this.scheduleTimeout(() => {
           void this.reconcileFrontmatter(file);
         }, 0);
       })
@@ -334,7 +343,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
             viewSnapshot.set(leaf, view.getViewData());
           }
         });
-        window.setTimeout(() => {
+        this.scheduleTimeout(() => {
           void this.checkAndFixStaleView(file, tModify, viewSnapshot);
         }, 500);
       })
@@ -355,10 +364,22 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   onunload() {
     var _a;
     console.log("[FFG] unloading");
+    this.saveSettingsDebounced.cancel();
+    void this.saveData(this.settings);
+    for (const id of this.pendingTimers) window.clearTimeout(id);
+    this.pendingTimers.clear();
     (_a = this.observer) == null ? void 0 : _a.disconnect();
     this.observer = null;
     document.querySelectorAll(".metadata-container").forEach((c) => this.deactivate(c));
-    document.querySelectorAll(".ffg-settings-gear").forEach((el) => el.remove());
+    document.querySelectorAll(".ffg-panel-actions, .ffg-settings-gear").forEach((el) => el.remove());
+  }
+  // setTimeout wrapper whose callbacks are cancelled on unload.
+  scheduleTimeout(fn, ms) {
+    const id = window.setTimeout(() => {
+      this.pendingTimers.delete(id);
+      fn();
+    }, ms);
+    this.pendingTimers.add(id);
   }
   async loadSettings() {
     var _a, _b, _c, _d, _e, _f;
@@ -835,11 +856,10 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   // For a given file, find the best-matching template per linked group and
   // return a map of groupId → preferred fieldOrder for that file. Used by
   // processContainer to give each Properties panel its template-respecting order.
-  perFileGroupOrders(file) {
+  perFileGroupOrders(filePath) {
     var _a;
     const result = /* @__PURE__ */ new Map();
-    if (!file) return result;
-    const filePath = file.path;
+    if (!filePath) return result;
     for (const g of this.settings.groups) {
       let bestTpl = null;
       let bestLen = -1;
@@ -900,7 +920,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     }
   }
   processContainer(container) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     try {
       this.ensureSettingsGear(container);
       this.ensureAddButtonOrder(container);
@@ -929,7 +949,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         return;
       }
       container.classList.remove("ffg-excluded");
-      const perFileOrders = this.perFileGroupOrders(fileForPanel);
+      const perFileOrders = this.perFileGroupOrders((_a = fileForPanel == null ? void 0 : fileForPanel.path) != null ? _a : null);
       const groups = this.runtimeGroups.map((g) => {
         const override = perFileOrders.get(g.id);
         if (!override) return g;
@@ -953,7 +973,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       const groupMembers = /* @__PURE__ */ new Map();
       for (let i = 0; i < allProps.length; i++) {
         const p = allProps[i];
-        const key = (_a = p.dataset.propertyKey) != null ? _a : "";
+        const key = (_b = p.dataset.propertyKey) != null ? _b : "";
         if (topSet.has(key)) {
           bucketByEl.set(p, {
             kind: "top",
@@ -963,13 +983,13 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         }
         let matchedGroupId = null;
         for (const g of groups) {
-          if (this.matchGroupForFile(g, key, (_b = fileForPanel == null ? void 0 : fileForPanel.path) != null ? _b : null)) {
+          if (this.matchGroupForFile(g, key, (_c = fileForPanel == null ? void 0 : fileForPanel.path) != null ? _c : null)) {
             matchedGroupId = g.id;
             break;
           }
         }
         if (matchedGroupId) {
-          const arr = (_c = groupMembers.get(matchedGroupId)) != null ? _c : [];
+          const arr = (_d = groupMembers.get(matchedGroupId)) != null ? _d : [];
           arr.push(p);
           groupMembers.set(matchedGroupId, arr);
         } else {
@@ -977,7 +997,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         }
       }
       for (const g of groups) {
-        const members = (_d = groupMembers.get(g.id)) != null ? _d : [];
+        const members = (_e = groupMembers.get(g.id)) != null ? _e : [];
         if (members.length === 0) continue;
         const ordered = orderByFieldOrder(members, g.fieldOrder);
         for (let i = 0; i < ordered.length; i++) {
@@ -1005,7 +1025,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         } else {
           const groupIdx = groups.findIndex((g) => g.id === b.groupId);
           order = _FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_BASE + groupIdx * _FoldableFrontmatterGroupsPlugin.GROUP_BLOCK_SIZE + 1 + b.index;
-          const folded = (_e = state.get(b.groupId)) != null ? _e : false;
+          const folded = (_f = state.get(b.groupId)) != null ? _f : false;
           if (p.dataset.ffgGroup !== b.groupId) p.dataset.ffgGroup = b.groupId;
           const foldVal = folded ? "true" : "false";
           if (p.dataset.ffgFolded !== foldVal) p.dataset.ffgFolded = foldVal;
@@ -1025,7 +1045,8 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   ensureContextMenuBinding(container) {
     if (this.contextMenuBoundContainers.has(container)) return;
     this.contextMenuBoundContainers.add(container);
-    container.addEventListener(
+    this.registerDomEvent(
+      container,
       "contextmenu",
       (e) => this.handlePropertyContextMenu(e),
       true
@@ -1547,7 +1568,16 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   }
   // ── Canonical order + reconcile ─────────────────────────────────────────────
   computeCanonicalOrder(keys, filePath = null) {
-    const groups = this.runtimeGroups;
+    const perFileOrders = this.perFileGroupOrders(filePath);
+    const groups = this.runtimeGroups.map((g) => {
+      const override = perFileOrders.get(g.id);
+      if (!override) return g;
+      const seen = new Set(override);
+      return {
+        ...g,
+        fieldOrder: [...override, ...g.fieldOrder.filter((n) => !seen.has(n))]
+      };
+    });
     const topSet = new Set(this.settings.topZone.fieldOrder);
     const bucket = /* @__PURE__ */ new Map();
     for (const k of keys) {
@@ -1699,7 +1729,9 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       const hasKey = Object.prototype.hasOwnProperty.call(fm, key);
       if (hasKey && !this.isEmptyValue(fm[key])) continue;
       const resolved = this.resolveSeedValue(value);
-      fm[key] = resolved === void 0 ? null : resolved;
+      const next = resolved === void 0 ? null : resolved;
+      if (hasKey && next === null) continue;
+      fm[key] = next;
       mutated = true;
     }
     return mutated;
@@ -1717,8 +1749,8 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       }
     }
     await this.maybeInsertBodyTemplate(file);
-    window.setTimeout(() => this.processAllContainers(), 100);
-    window.setTimeout(() => this.processAllContainers(), 600);
+    this.scheduleTimeout(() => this.processAllContainers(), 100);
+    this.scheduleTimeout(() => this.processAllContainers(), 600);
   }
   // Longest matching prefix among any folderTemplate; ties broken by settings order
   // (later entries override earlier when prefix length is equal).
@@ -1770,7 +1802,8 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       }
       const templateText = await this.app.vault.read(templateFile);
       const { body: templateBody } = this.splitFrontmatter(templateText);
-      const insertion = templateBody.length === 0 ? templateText : templateBody;
+      if (templateBody.trim().length === 0) return;
+      const insertion = templateBody;
       const separator = fm.length > 0 ? "\n" : "";
       const next = fm + separator + insertion;
       await this.app.vault.modify(file, next);
@@ -1888,30 +1921,44 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     const s = scope.endsWith("/") ? scope : scope + "/";
     return filePath.startsWith(s);
   }
-  // Count null and total occurrences of `fieldName` within `scope`.
-  // `coveredNullCount` = nulls in files matched by a template that owns the
-  // field. The delta (nullCount - coveredNullCount) is orphan nulls sitting in
-  // notes where no template in this group covers the field.
-  async countFieldInScope(fieldName, scope) {
-    var _a;
-    const activeTpls = this.templatesActiveForField(fieldName).total;
-    let nullCount = 0;
-    let totalCount = 0;
-    let coveredNullCount = 0;
+  // Count null and total occurrences of every requested field within `scope`
+  // in ONE vault walk. `coveredNullCount` = nulls in files matched by a
+  // template that owns the field; the delta (nullCount - coveredNullCount) is
+  // orphan nulls in notes no template covers. Replaces the per-field variant
+  // that re-walked the whole vault once per field (O(fields × files)).
+  countFieldsInScope(fieldNames, scope) {
+    var _a, _b;
+    const counts = /* @__PURE__ */ new Map();
+    const activeByField = /* @__PURE__ */ new Map();
+    const groupEffectiveCache = /* @__PURE__ */ new Map();
+    for (const name of fieldNames) {
+      counts.set(name, { nullCount: 0, totalCount: 0, coveredNullCount: 0 });
+      activeByField.set(
+        name,
+        this.templatesActiveForField(name, groupEffectiveCache).total
+      );
+    }
     for (const file of this.app.vault.getMarkdownFiles()) {
       if (!this.fileInScope(file.path, scope)) continue;
       const fm = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
       if (!fm) continue;
-      if (!Object.prototype.hasOwnProperty.call(fm, fieldName)) continue;
-      totalCount++;
-      if (this.isNullValue(fm[fieldName])) {
-        nullCount++;
-        if (activeTpls.some((tpl) => this.templateMatchScore(tpl, file.path) >= 0)) {
-          coveredNullCount++;
+      for (const k of Object.keys(fm)) {
+        if (k === "position") continue;
+        const c = counts.get(k);
+        if (!c) continue;
+        c.totalCount++;
+        if (this.isNullValue(fm[k])) {
+          c.nullCount++;
+          const activeTpls = (_b = activeByField.get(k)) != null ? _b : [];
+          if (activeTpls.some(
+            (tpl) => this.templateMatchScore(tpl, file.path) >= 0
+          )) {
+            c.coveredNullCount++;
+          }
         }
       }
     }
-    return { nullCount, totalCount, coveredNullCount };
+    return counts;
   }
   // For inspection: every file in scope that has `fieldName` set, with the
   // raw value. `covered` = the note sits in a folder matched by a template
@@ -2431,7 +2478,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   // Write a checklist note to the Inbox folder listing every conflict file
   // as a wikilink. Returns the path written.
   async writeMigrationConflictNote(sourceField, targetField, scope, conflicts) {
-    const inboxFolder = "_ Inbox _";
+    const inboxFolder = "Inbox";
     const date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const safeSource = sourceField.replace(/[^a-zA-Z0-9_-]/g, "_");
     const safeTarget = targetField.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -2470,6 +2517,9 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       lines.push(`    - \`${targetField}\`: ${renderValue(c.targetValue)}`);
     }
     lines.push("");
+    if (!this.app.vault.getAbstractFileByPath(inboxFolder)) {
+      await this.app.vault.createFolder(inboxFolder);
+    }
     await this.app.vault.create(candidate, lines.join("\n"));
     return candidate;
   }
@@ -2483,15 +2533,15 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       const cachedFm = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) != null ? _b : null;
       if (cachedFm) {
         const cachedKeys = Object.keys(cachedFm).filter((k) => k !== "position");
-        const needsDefault = defaults.size > 0 && Array.from(defaults.keys()).some(
-          (k) => !cachedKeys.includes(k) || this.isEmptyValue(cachedFm[k])
-        );
+        const needsDefault = defaults.size > 0 && Array.from(defaults.entries()).some(([k, v]) => {
+          if (!cachedKeys.includes(k)) return true;
+          if (!this.isEmptyValue(cachedFm[k])) return false;
+          const resolved = this.resolveSeedValue(v);
+          return resolved !== void 0 && resolved !== null;
+        });
         const needsLint = lintFieldsSet.size > 0 && cachedKeys.some((k) => {
           if (!lintFieldsSet.has(k)) return false;
-          if (defaults.has(k)) {
-            const seed = defaults.get(k);
-            if (seed !== void 0 && seed !== null) return false;
-          }
+          if (defaults.has(k)) return false;
           return this.isNullValue(cachedFm[k]);
         });
         let needsOrphanScrub = false;
@@ -2527,10 +2577,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
           for (const k of Object.keys(fm)) {
             if (k === "position") continue;
             if (!lintFieldsSet.has(k)) continue;
-            if (defaults.has(k)) {
-              const seed = defaults.get(k);
-              if (seed !== void 0 && seed !== null) continue;
-            }
+            if (defaults.has(k)) continue;
             if (this.isNullValue(fm[k])) {
               delete fm[k];
               mutated = true;
@@ -2770,7 +2817,7 @@ var MigrationConfirmModal = class extends import_obsidian.Modal {
       });
       if (this.scan.conflicts.length >= 6) {
         list.createEl("li", {
-          text: `${this.scan.conflicts.length} conflict(s) will be written to a checklist note in _ Inbox _/ for manual resolution.`
+          text: `${this.scan.conflicts.length} conflict(s) will be written to a checklist note in Inbox/ for manual resolution.`
         });
       } else if (this.scan.conflicts.length > 0) {
         list.createEl("li", {
@@ -3913,9 +3960,9 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     setting.settingEl.addClass("ffg-field-row");
     setting.infoEl.remove();
     setting.addText((text) => {
-      text.setPlaceholder("frontmatter key").setValue(override.name).onChange(async (value) => {
+      text.setPlaceholder("frontmatter key").setValue(override.name).onChange((value) => {
         override.name = value.trim();
-        await this.plugin.saveSettings();
+        this.plugin.saveSettingsDebounced();
       });
       text.inputEl.addClass("ffg-field-name-input");
       new FrontmatterKeySuggest(this.app, text.inputEl, async (value) => {
@@ -3937,7 +3984,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       override.icon = raw.trim();
       iconPreview.empty();
       if (override.icon) (0, import_obsidian.setIcon)(iconPreview, override.icon);
-      await this.plugin.saveSettings();
+      this.plugin.saveSettingsDebounced();
     };
     iconInput.addEventListener("input", () => void updateIcon(iconInput.value));
     new LucideIconSuggest(this.app, iconInput, async (value) => {
@@ -4083,13 +4130,10 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         )) {
           allFields.add(name);
         }
-        const counts = /* @__PURE__ */ new Map();
-        for (const name of allFields) {
-          counts.set(
-            name,
-            await this.plugin.countFieldInScope(name, this.cleanupScope)
-          );
-        }
+        const counts = this.plugin.countFieldsInScope(
+          allFields,
+          this.cleanupScope
+        );
         this.renderCleanupResults(
           resultsContainer,
           allFields,
@@ -4112,7 +4156,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     const section = parent.createDiv("ffg-migrate-section");
     section.createEl("h3", { text: "Migrate field" });
     section.createEl("p", {
-      text: "Copy values from one frontmatter field to another across the chosen scope, then delete the source. One-off use: consolidating two near-duplicate fields. Conflicts (files where the target already has a non-null/non-empty value) are resolved interactively if fewer than 6, or written to a checklist note in _ Inbox _/ if 6 or more. Every migration is logged to the scrub log.",
+      text: "Copy values from one frontmatter field to another across the chosen scope, then delete the source. One-off use: consolidating two near-duplicate fields. Conflicts (files where the target already has a non-null/non-empty value) are resolved interactively if fewer than 6, or written to a checklist note in Inbox/ if 6 or more. Every migration is logged to the scrub log.",
       cls: "setting-item-description"
     });
     const scopeRow = section.createDiv("ffg-cleanup-scope-row");
@@ -4236,7 +4280,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       }
       if (lastScan.conflicts.length >= 6) {
         summary.createEl("div", {
-          text: `Conflicts will be written to a checklist note in _ Inbox _/ for manual resolution.`,
+          text: `Conflicts will be written to a checklist note in Inbox/ for manual resolution.`,
           cls: "ffg-migrate-note"
         });
       } else if (lastScan.conflicts.length > 0) {
@@ -4672,9 +4716,9 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       nameInput.placeholder = "Template name (optional)";
       nameInput.value = tpl.name;
       nameInput.addEventListener("click", (e) => e.stopPropagation());
-      nameInput.addEventListener("input", async () => {
+      nameInput.addEventListener("input", () => {
         tpl.name = nameInput.value;
-        await this.plugin.saveSettings();
+        this.plugin.saveSettingsDebounced();
       });
       nameInRow = (value) => {
         if (nameInput.value !== value) nameInput.value = value;
@@ -4837,11 +4881,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         });
         input.placeholder = "path prefix (empty = global)";
         input.value = path;
-        input.addEventListener("input", async () => {
+        input.addEventListener("input", () => {
           tpl.pathPrefixes[index] = input.value;
           pathsInRow == null ? void 0 : pathsInRow();
           renderTargetingSummary();
-          await this.plugin.saveSettings();
+          this.plugin.saveSettingsDebounced();
         });
         new FolderPathSuggest(this.app, input, async (value) => {
           tpl.pathPrefixes[index] = value;
@@ -4900,11 +4944,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         });
         input.placeholder = "path prefix to exclude";
         input.value = path;
-        input.addEventListener("input", async () => {
+        input.addEventListener("input", () => {
           tpl.excludedPathPrefixes[index] = input.value;
           renderTargetingSummary();
           pathsHeaderName.setText(includePathsLabel());
-          await this.plugin.saveSettings();
+          this.plugin.saveSettingsDebounced();
         });
         new FolderPathSuggest(this.app, input, async (value) => {
           tpl.excludedPathPrefixes[index] = value;
@@ -4961,12 +5005,12 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     });
     bodyInput.placeholder = "path/to/template-note.md";
     bodyInput.value = (_d = tpl.bodyTemplatePath) != null ? _d : "";
-    bodyInput.addEventListener("input", async () => {
+    bodyInput.addEventListener("input", () => {
       const value = bodyInput.value.trim();
       if (value) tpl.bodyTemplatePath = value;
       else delete tpl.bodyTemplatePath;
       renderTargetingSummary();
-      await this.plugin.saveSettings();
+      this.plugin.saveSettingsDebounced();
     });
     new MarkdownFilePathSuggest(this.app, bodyInput, async (value) => {
       bodyInput.value = value;
@@ -5241,10 +5285,10 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       });
       nameInput.placeholder = "frontmatter key";
       nameInput.value = fieldName;
-      nameInput.addEventListener("input", async () => {
+      nameInput.addEventListener("input", () => {
         if (!explicit) return;
         explicit.name = nameInput.value.trim();
-        await this.plugin.saveSettings();
+        this.plugin.saveSettingsDebounced();
       });
       nameInput.addEventListener("blur", () => {
         onFieldsChanged == null ? void 0 : onFieldsChanged();
@@ -5265,7 +5309,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
           if (explicit) {
             tpl.fields = tpl.fields.filter((f) => f !== explicit);
             explicit = void 0;
-            await this.plugin.saveSettings();
+            this.plugin.saveSettingsDebounced();
           }
         } else {
           if (!explicit) {
@@ -5274,11 +5318,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
           } else {
             explicit.value = newValue;
           }
-          await this.plugin.saveSettings();
+          this.plugin.saveSettingsDebounced();
         }
       } else if (explicit) {
         explicit.value = newValue;
-        await this.plugin.saveSettings();
+        this.plugin.saveSettingsDebounced();
       }
     };
     const currentValue = explicit ? explicit.value : void 0;
@@ -5617,10 +5661,10 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
           })
         );
         setting.addText((text) => {
-          text.setValue(field).onChange(async (value) => {
+          text.setValue(field).onChange((value) => {
             const current = getList();
             current[index] = value;
-            await setList(current);
+            this.plugin.saveSettingsDebounced();
           });
           new FrontmatterKeySuggest(
             this.app,
@@ -5689,9 +5733,9 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     });
     nameInput.placeholder = "Group name";
     nameInput.value = group.name;
-    nameInput.addEventListener("input", async () => {
+    nameInput.addEventListener("input", () => {
       group.name = nameInput.value;
-      await this.plugin.saveSettings();
+      this.plugin.saveSettingsDebounced();
     });
     nameInput.addEventListener("click", (e) => e.stopPropagation());
     const summaryEl = head.createSpan({

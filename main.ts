@@ -12,6 +12,7 @@ import {
   setIcon,
   getIconIds,
   MarkdownView,
+  debounce,
 } from "obsidian";
 
 // ── Serializable settings schema ──────────────────────────────────────────────
@@ -411,9 +412,18 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // Reference to the settings tab so Properties-panel affordances (e.g. the
   // per-group settings icon) can drive navigation into the settings UI.
   settingTab: FfgSettingTab | null = null;
+  // Debounced persistence for per-keystroke settings inputs (template names,
+  // path prefixes, icon names, seed values). Fires once, 400ms after the last
+  // keystroke, so typing doesn't trigger a data.json write + wildcard-cache
+  // invalidation + full panel reprocess per character. Toggles and buttons
+  // still call saveSettings() directly.
+  saveSettingsDebounced = debounce(() => void this.saveSettings(), 400, true);
+  // Timers that must not fire after unload (they would repaint or reconcile
+  // on a dead plugin). Cleared wholesale in onunload.
+  private pendingTimers = new Set<number>();
 
   async onload() {
-    console.log("[FFG] loading v1.4.3");
+    console.log(`[FFG] loading v${this.manifest.version}`);
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -456,7 +466,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       // only a long backstop for warm starts where it never re-fires; kept
       // generous so it won't preempt a slow mobile cold-start index.
       this.registerEvent(this.app.metadataCache.on("resolved", markReady));
-      window.setTimeout(markReady, 10000);
+      this.scheduleTimeout(markReady, 10000);
     });
 
     this.registerEvent(
@@ -532,7 +542,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         if (this.isFileExcludedFromReconcile(file.path)) return;
         // Defer to next tick so the file-open paint isn't blocked by the
         // synchronous compute phase of reconcile.
-        window.setTimeout(() => {
+        this.scheduleTimeout(() => {
           void this.reconcileFrontmatter(file);
         }, 0);
       })
@@ -555,7 +565,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
             viewSnapshot.set(leaf, view.getViewData());
           }
         });
-        window.setTimeout(() => {
+        this.scheduleTimeout(() => {
           void this.checkAndFixStaleView(file, tModify, viewSnapshot);
         }, 500);
       })
@@ -590,14 +600,32 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
 
   onunload() {
     console.log("[FFG] unloading");
+    // Persist any settings edit still sitting in the debounce window, without
+    // running the saveSettings repaint path on a dead plugin.
+    this.saveSettingsDebounced.cancel();
+    void this.saveData(this.settings);
+    for (const id of this.pendingTimers) window.clearTimeout(id);
+    this.pendingTimers.clear();
     this.observer?.disconnect();
     this.observer = null;
     document
       .querySelectorAll<HTMLElement>(".metadata-container")
       .forEach((c) => this.deactivate(c));
+    // Remove the whole actions wrapper, not just the buttons inside it. An
+    // empty leftover .ffg-panel-actions made ensureSettingsGear's idempotency
+    // check refuse to re-inject the gear/refresh buttons after a plugin reload.
     document
-      .querySelectorAll(".ffg-settings-gear")
+      .querySelectorAll(".ffg-panel-actions, .ffg-settings-gear")
       .forEach((el) => el.remove());
+  }
+
+  // setTimeout wrapper whose callbacks are cancelled on unload.
+  private scheduleTimeout(fn: () => void, ms: number): void {
+    const id = window.setTimeout(() => {
+      this.pendingTimers.delete(id);
+      fn();
+    }, ms);
+    this.pendingTimers.add(id);
   }
 
   async loadSettings() {
@@ -1171,10 +1199,9 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // For a given file, find the best-matching template per linked group and
   // return a map of groupId → preferred fieldOrder for that file. Used by
   // processContainer to give each Properties panel its template-respecting order.
-  private perFileGroupOrders(file: TFile | null): Map<string, string[]> {
+  private perFileGroupOrders(filePath: string | null): Map<string, string[]> {
     const result = new Map<string, string[]>();
-    if (!file) return result;
-    const filePath = file.path;
+    if (!filePath) return result;
     for (const g of this.settings.groups) {
       let bestTpl: FolderTemplate | null = null;
       let bestLen = -1;
@@ -1295,7 +1322,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         return;
       }
       container.classList.remove("ffg-excluded");
-      const perFileOrders = this.perFileGroupOrders(fileForPanel);
+      const perFileOrders = this.perFileGroupOrders(fileForPanel?.path ?? null);
       const groups = this.runtimeGroups.map((g) => {
         const override = perFileOrders.get(g.id);
         if (!override) return g;
@@ -1421,7 +1448,11 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   private ensureContextMenuBinding(container: HTMLElement): void {
     if (this.contextMenuBoundContainers.has(container)) return;
     this.contextMenuBoundContainers.add(container);
-    container.addEventListener(
+    // registerDomEvent (not raw addEventListener) so the listener dies with
+    // the plugin; a raw listener survived unload and produced doubled context
+    // menus after a plugin reload.
+    this.registerDomEvent(
+      container,
       "contextmenu",
       (e) => this.handlePropertyContextMenu(e),
       true
@@ -2066,7 +2097,19 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // ── Canonical order + reconcile ─────────────────────────────────────────────
 
   computeCanonicalOrder(keys: string[], filePath: string | null = null): string[] {
-    const groups = this.runtimeGroups;
+    // Merge the file's matching-template fieldOrder into each group, exactly
+    // as processContainer does for the panel, so the key order written to
+    // disk matches the order the Properties panel displays.
+    const perFileOrders = this.perFileGroupOrders(filePath);
+    const groups = this.runtimeGroups.map((g) => {
+      const override = perFileOrders.get(g.id);
+      if (!override) return g;
+      const seen = new Set(override);
+      return {
+        ...g,
+        fieldOrder: [...override, ...g.fieldOrder.filter((n) => !seen.has(n))],
+      };
+    });
     const topSet = new Set(this.settings.topZone.fieldOrder);
 
     type Bucket = "top" | "unmatched" | { groupId: string };
@@ -2255,7 +2298,12 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       const hasKey = Object.prototype.hasOwnProperty.call(fm, key);
       if (hasKey && !this.isEmptyValue(fm[key])) continue;
       const resolved = this.resolveSeedValue(value);
-      fm[key] = resolved === undefined ? null : resolved;
+      const next = resolved === undefined ? null : resolved;
+      // A present-but-empty key with an empty seed is already in its target
+      // state. Re-assigning null would flag a mutation and force a rewrite
+      // (mtime bump) on every reconcile of every note with an empty slot.
+      if (hasKey && next === null) continue;
+      fm[key] = next;
       mutated = true;
     }
     return mutated;
@@ -2283,8 +2331,8 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     // own. Idempotent (ensureSettingsGear no-ops if already present); two
     // attempts cover mobile render lag. Only fires for genuine post-layout
     // creates, so it doesn't reintroduce any startup cost.
-    window.setTimeout(() => this.processAllContainers(), 100);
-    window.setTimeout(() => this.processAllContainers(), 600);
+    this.scheduleTimeout(() => this.processAllContainers(), 100);
+    this.scheduleTimeout(() => this.processAllContainers(), 600);
   }
 
   // Longest matching prefix among any folderTemplate; ties broken by settings order
@@ -2341,7 +2389,10 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       // Strip frontmatter from the template file too; only its body is inserted.
       const templateText = await this.app.vault.read(templateFile);
       const { body: templateBody } = this.splitFrontmatter(templateText);
-      const insertion = templateBody.length === 0 ? templateText : templateBody;
+      // A template that is only frontmatter (or empty) has nothing to insert.
+      // The old fallback pasted the raw file, frontmatter block included.
+      if (templateBody.trim().length === 0) return;
+      const insertion = templateBody;
 
       const separator = fm.length > 0 ? "\n" : "";
       const next = fm + separator + insertion;
@@ -2483,38 +2534,54 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     return filePath.startsWith(s);
   }
 
-  // Count null and total occurrences of `fieldName` within `scope`.
-  // `coveredNullCount` = nulls in files matched by a template that owns the
-  // field. The delta (nullCount - coveredNullCount) is orphan nulls sitting in
-  // notes where no template in this group covers the field.
-  async countFieldInScope(
-    fieldName: string,
+  // Count null and total occurrences of every requested field within `scope`
+  // in ONE vault walk. `coveredNullCount` = nulls in files matched by a
+  // template that owns the field; the delta (nullCount - coveredNullCount) is
+  // orphan nulls in notes no template covers. Replaces the per-field variant
+  // that re-walked the whole vault once per field (O(fields × files)).
+  countFieldsInScope(
+    fieldNames: Set<string>,
     scope: string
-  ): Promise<{
-    nullCount: number;
-    totalCount: number;
-    coveredNullCount: number;
-  }> {
-    const activeTpls = this.templatesActiveForField(fieldName).total;
-    let nullCount = 0;
-    let totalCount = 0;
-    let coveredNullCount = 0;
+  ): Map<
+    string,
+    { nullCount: number; totalCount: number; coveredNullCount: number }
+  > {
+    const counts = new Map<
+      string,
+      { nullCount: number; totalCount: number; coveredNullCount: number }
+    >();
+    const activeByField = new Map<string, FolderTemplate[]>();
+    const groupEffectiveCache = new Map<string, Set<string>>();
+    for (const name of fieldNames) {
+      counts.set(name, { nullCount: 0, totalCount: 0, coveredNullCount: 0 });
+      activeByField.set(
+        name,
+        this.templatesActiveForField(name, groupEffectiveCache).total
+      );
+    }
     for (const file of this.app.vault.getMarkdownFiles()) {
       if (!this.fileInScope(file.path, scope)) continue;
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
       if (!fm) continue;
-      if (!Object.prototype.hasOwnProperty.call(fm, fieldName)) continue;
-      totalCount++;
-      if (this.isNullValue(fm[fieldName])) {
-        nullCount++;
-        if (
-          activeTpls.some((tpl) => this.templateMatchScore(tpl, file.path) >= 0)
-        ) {
-          coveredNullCount++;
+      for (const k of Object.keys(fm)) {
+        if (k === "position") continue;
+        const c = counts.get(k);
+        if (!c) continue;
+        c.totalCount++;
+        if (this.isNullValue(fm[k])) {
+          c.nullCount++;
+          const activeTpls = activeByField.get(k) ?? [];
+          if (
+            activeTpls.some(
+              (tpl) => this.templateMatchScore(tpl, file.path) >= 0
+            )
+          ) {
+            c.coveredNullCount++;
+          }
         }
       }
     }
-    return { nullCount, totalCount, coveredNullCount };
+    return counts;
   }
 
   // For inspection: every file in scope that has `fieldName` set, with the
@@ -3145,7 +3212,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     scope: string,
     conflicts: Array<{ file: TFile; sourceValue: unknown; targetValue: unknown }>
   ): Promise<string> {
-    const inboxFolder = "_ Inbox _";
+    const inboxFolder = "Inbox";
     const date = new Date().toISOString().slice(0, 10);
     const safeSource = sourceField.replace(/[^a-zA-Z0-9_-]/g, "_");
     const safeTarget = targetField.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -3188,6 +3255,9 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     }
     lines.push("");
 
+    if (!this.app.vault.getAbstractFileByPath(inboxFolder)) {
+      await this.app.vault.createFolder(inboxFolder);
+    }
     await this.app.vault.create(candidate, lines.join("\n"));
     return candidate;
   }
@@ -3211,19 +3281,26 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         this.app.metadataCache.getFileCache(file)?.frontmatter ?? null;
       if (cachedFm) {
         const cachedKeys = Object.keys(cachedFm).filter((k) => k !== "position");
+        // Mirrors applyDefaultsToFm exactly: a write is needed only when a key
+        // is missing, or present-but-empty with a NON-empty seed. Keep the two
+        // in sync — this pre-check is the only thing standing between a clean
+        // open/leave and a processFrontMatter call (which rewrites the file
+        // even when the callback is a no-op).
         const needsDefault =
           defaults.size > 0 &&
-          Array.from(defaults.keys()).some(
-            (k) => !cachedKeys.includes(k) || this.isEmptyValue(cachedFm[k])
-          );
+          Array.from(defaults.entries()).some(([k, v]) => {
+            if (!cachedKeys.includes(k)) return true;
+            if (!this.isEmptyValue(cachedFm[k])) return false;
+            const resolved = this.resolveSeedValue(v);
+            return resolved !== undefined && resolved !== null;
+          });
+        // Mirrors the lint pass below: keys the defaults map wants present are
+        // never lint-scrubbed (defaults win over cleanup).
         const needsLint =
           lintFieldsSet.size > 0 &&
           cachedKeys.some((k) => {
             if (!lintFieldsSet.has(k)) return false;
-            if (defaults.has(k)) {
-              const seed = defaults.get(k);
-              if (seed !== undefined && seed !== null) return false;
-            }
+            if (defaults.has(k)) return false;
             return this.isNullValue(cachedFm[k]);
           });
         let needsOrphanScrub = false;
@@ -3260,15 +3337,16 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         }
 
         // Lint pass: scrub keys flagged by any matching template if value is null.
-        // Skip keys covered by a default with a non-null seed (oscillation guard).
+        // Any key in the defaults map is skipped entirely (defaults win over
+        // cleanup): if a matching template says the field should exist, deleting
+        // it here would just make the defaults pass re-insert it on the next
+        // reconcile — an insert/delete loop that rewrote the file on every
+        // open/leave and stripped intentionally-empty scaffold fields.
         if (lintFieldsSet.size > 0) {
           for (const k of Object.keys(fm)) {
             if (k === "position") continue;
             if (!lintFieldsSet.has(k)) continue;
-            if (defaults.has(k)) {
-              const seed = defaults.get(k);
-              if (seed !== undefined && seed !== null) continue;
-            }
+            if (defaults.has(k)) continue;
             if (this.isNullValue(fm[k])) {
               delete fm[k];
               mutated = true;
@@ -3605,7 +3683,7 @@ class MigrationConfirmModal extends Modal {
       });
       if (this.scan.conflicts.length >= 6) {
         list.createEl("li", {
-          text: `${this.scan.conflicts.length} conflict(s) will be written to a checklist note in _ Inbox _/ for manual resolution.`,
+          text: `${this.scan.conflicts.length} conflict(s) will be written to a checklist note in Inbox/ for manual resolution.`,
         });
       } else if (this.scan.conflicts.length > 0) {
         list.createEl("li", {
@@ -5023,9 +5101,9 @@ class FfgSettingTab extends PluginSettingTab {
       text
         .setPlaceholder("frontmatter key")
         .setValue(override.name)
-        .onChange(async (value) => {
+        .onChange((value) => {
           override.name = value.trim();
-          await this.plugin.saveSettings();
+          this.plugin.saveSettingsDebounced();
         });
       text.inputEl.addClass("ffg-field-name-input");
       new FrontmatterKeySuggest(this.app, text.inputEl, async (value) => {
@@ -5050,7 +5128,7 @@ class FfgSettingTab extends PluginSettingTab {
       override.icon = raw.trim();
       iconPreview.empty();
       if (override.icon) setIcon(iconPreview, override.icon);
-      await this.plugin.saveSettings();
+      this.plugin.saveSettingsDebounced();
     };
 
     iconInput.addEventListener("input", () => void updateIcon(iconInput.value));
@@ -5222,16 +5300,10 @@ class FfgSettingTab extends PluginSettingTab {
           allFields.add(name);
         }
 
-        const counts = new Map<
-          string,
-          { nullCount: number; totalCount: number; coveredNullCount: number }
-        >();
-        for (const name of allFields) {
-          counts.set(
-            name,
-            await this.plugin.countFieldInScope(name, this.cleanupScope)
-          );
-        }
+        const counts = this.plugin.countFieldsInScope(
+          allFields,
+          this.cleanupScope
+        );
 
         this.renderCleanupResults(
           resultsContainer,
@@ -5256,7 +5328,7 @@ class FfgSettingTab extends PluginSettingTab {
     const section = parent.createDiv("ffg-migrate-section");
     section.createEl("h3", { text: "Migrate field" });
     section.createEl("p", {
-      text: "Copy values from one frontmatter field to another across the chosen scope, then delete the source. One-off use: consolidating two near-duplicate fields. Conflicts (files where the target already has a non-null/non-empty value) are resolved interactively if fewer than 6, or written to a checklist note in _ Inbox _/ if 6 or more. Every migration is logged to the scrub log.",
+      text: "Copy values from one frontmatter field to another across the chosen scope, then delete the source. One-off use: consolidating two near-duplicate fields. Conflicts (files where the target already has a non-null/non-empty value) are resolved interactively if fewer than 6, or written to a checklist note in Inbox/ if 6 or more. Every migration is logged to the scrub log.",
       cls: "setting-item-description",
     });
 
@@ -5405,7 +5477,7 @@ class FfgSettingTab extends PluginSettingTab {
       }
       if (lastScan.conflicts.length >= 6) {
         summary.createEl("div", {
-          text: `Conflicts will be written to a checklist note in _ Inbox _/ for manual resolution.`,
+          text: `Conflicts will be written to a checklist note in Inbox/ for manual resolution.`,
           cls: "ffg-migrate-note",
         });
       } else if (lastScan.conflicts.length > 0) {
@@ -5929,9 +6001,9 @@ class FfgSettingTab extends PluginSettingTab {
       nameInput.placeholder = "Template name (optional)";
       nameInput.value = tpl.name;
       nameInput.addEventListener("click", (e) => e.stopPropagation());
-      nameInput.addEventListener("input", async () => {
+      nameInput.addEventListener("input", () => {
         tpl.name = nameInput.value;
-        await this.plugin.saveSettings();
+        this.plugin.saveSettingsDebounced();
       });
       nameInRow = (value) => {
         if (nameInput.value !== value) nameInput.value = value;
@@ -6141,11 +6213,11 @@ class FfgSettingTab extends PluginSettingTab {
         });
         input.placeholder = "path prefix (empty = global)";
         input.value = path;
-        input.addEventListener("input", async () => {
+        input.addEventListener("input", () => {
           tpl.pathPrefixes[index] = input.value;
           pathsInRow?.();
           renderTargetingSummary();
-          await this.plugin.saveSettings();
+          this.plugin.saveSettingsDebounced();
         });
         new FolderPathSuggest(this.app, input, async (value) => {
           tpl.pathPrefixes[index] = value;
@@ -6209,11 +6281,11 @@ class FfgSettingTab extends PluginSettingTab {
         });
         input.placeholder = "path prefix to exclude";
         input.value = path;
-        input.addEventListener("input", async () => {
+        input.addEventListener("input", () => {
           tpl.excludedPathPrefixes[index] = input.value;
           renderTargetingSummary();
           pathsHeaderName.setText(includePathsLabel());
-          await this.plugin.saveSettings();
+          this.plugin.saveSettingsDebounced();
         });
         new FolderPathSuggest(this.app, input, async (value) => {
           tpl.excludedPathPrefixes[index] = value;
@@ -6273,12 +6345,12 @@ class FfgSettingTab extends PluginSettingTab {
     });
     bodyInput.placeholder = "path/to/template-note.md";
     bodyInput.value = tpl.bodyTemplatePath ?? "";
-    bodyInput.addEventListener("input", async () => {
+    bodyInput.addEventListener("input", () => {
       const value = bodyInput.value.trim();
       if (value) tpl.bodyTemplatePath = value;
       else delete tpl.bodyTemplatePath;
       renderTargetingSummary();
-      await this.plugin.saveSettings();
+      this.plugin.saveSettingsDebounced();
     });
     new MarkdownFilePathSuggest(this.app, bodyInput, async (value) => {
       bodyInput.value = value;
@@ -6635,10 +6707,10 @@ class FfgSettingTab extends PluginSettingTab {
       });
       nameInput.placeholder = "frontmatter key";
       nameInput.value = fieldName;
-      nameInput.addEventListener("input", async () => {
+      nameInput.addEventListener("input", () => {
         if (!explicit) return;
         explicit.name = nameInput.value.trim();
-        await this.plugin.saveSettings();
+        this.plugin.saveSettingsDebounced();
       });
       nameInput.addEventListener("blur", () => {
         onFieldsChanged?.();
@@ -6663,7 +6735,7 @@ class FfgSettingTab extends PluginSettingTab {
           if (explicit) {
             tpl.fields = tpl.fields.filter((f) => f !== explicit);
             explicit = undefined;
-            await this.plugin.saveSettings();
+            this.plugin.saveSettingsDebounced();
           }
         } else {
           if (!explicit) {
@@ -6672,11 +6744,11 @@ class FfgSettingTab extends PluginSettingTab {
           } else {
             explicit.value = newValue;
           }
-          await this.plugin.saveSettings();
+          this.plugin.saveSettingsDebounced();
         }
       } else if (explicit) {
         explicit.value = newValue;
-        await this.plugin.saveSettings();
+        this.plugin.saveSettingsDebounced();
       }
     };
 
@@ -7071,10 +7143,13 @@ class FfgSettingTab extends PluginSettingTab {
             })
         );
         setting.addText((text) => {
-          text.setValue(field).onChange(async (value) => {
+          // Per-keystroke path: mutate the live list and persist debounced.
+          // Full setList (summary refresh, section re-render) still runs on
+          // suggester accept and on the reorder/remove buttons.
+          text.setValue(field).onChange((value) => {
             const current = getList();
             current[index] = value;
-            await setList(current);
+            this.plugin.saveSettingsDebounced();
           });
           new FrontmatterKeySuggest(
             this.app,
@@ -7154,9 +7229,9 @@ class FfgSettingTab extends PluginSettingTab {
     });
     nameInput.placeholder = "Group name";
     nameInput.value = group.name;
-    nameInput.addEventListener("input", async () => {
+    nameInput.addEventListener("input", () => {
       group.name = nameInput.value;
-      await this.plugin.saveSettings();
+      this.plugin.saveSettingsDebounced();
     });
     nameInput.addEventListener("click", (e) => e.stopPropagation());
 
