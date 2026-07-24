@@ -423,7 +423,6 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   private pendingTimers = new Set<number>();
 
   async onload() {
-    console.log(`[FFG] loading v${this.manifest.version}`);
     await this.loadSettings();
     this.settingTab = new FfgSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -489,7 +488,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     this.addCommand({
       id: "reconcile-frontmatter-order",
       name: "Reconcile frontmatter order (active file)",
-      callback: async () => {
+      callback: () => { void (async () => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md") {
           new Notice("[FFG] No active markdown file");
@@ -500,13 +499,13 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         else if (result === "noop") new Notice("[FFG] Already in canonical order");
         else if (result === "no-frontmatter") new Notice("[FFG] No frontmatter");
         else if (result === "error") new Notice("[FFG] Error, see console");
-      },
+      })(); },
     });
 
     this.addCommand({
       id: "apply-default-frontmatter",
       name: "Apply default frontmatter (active file)",
-      callback: async () => {
+      callback: () => { void (async () => {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "md") {
           new Notice("[FFG] No active markdown file");
@@ -517,7 +516,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         else if (result === "noop") new Notice("[FFG] No changes needed");
         else if (result === "no-frontmatter") new Notice("[FFG] No frontmatter");
         else if (result === "error") new Notice("[FFG] Error, see console");
-      },
+      })(); },
     });
 
     this.registerEvent(
@@ -599,7 +598,6 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   }
 
   onunload() {
-    console.log("[FFG] unloading");
     // Persist any settings edit still sitting in the debounce window, without
     // running the saveSettings repaint path on a dead plugin.
     this.saveSettingsDebounced.cancel();
@@ -1510,9 +1508,13 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       menu.addItem((item) => {
         item.setTitle("Property type");
         item.setIcon("type");
-        const sub = (item as unknown as {
-          setSubmenu: () => Menu;
-        }).setSubmenu();
+        const withSub = item as unknown as { setSubmenu?: () => Menu };
+        // Guard the undocumented submenu API. The context menu is
+        // preventDefault'd before it is built, so if a future Obsidian drops
+        // setSubmenu a thrown cast would leave the user with no menu at all.
+        // Degrade to the "Property type" item without a submenu instead.
+        if (typeof withSub.setSubmenu !== "function") return;
+        const sub = withSub.setSubmenu();
         for (const t of types) {
           sub.addItem((sub2) => {
             sub2.setTitle(t.label);
@@ -1537,7 +1539,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     menu.addItem((item) => {
       item.setIcon("trash");
       item.setTitle("Remove property");
-      item.onClick(async () => {
+      item.onClick(() => { void (async () => {
         const file = this.fileForContainer(propRow.closest(
           ".metadata-container"
         ) as HTMLElement);
@@ -1550,7 +1552,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
           console.error("[FFG] remove property error", err);
           new Notice("[FFG] Remove failed, see console");
         }
-      });
+      })(); });
     });
 
     menu.addSeparator();
@@ -1575,7 +1577,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
           item.setTitle(
             present ? `Remove from "${label}"` : `Add to "${label}"`
           );
-          item.onClick(async () => {
+          item.onClick(() => { void (async () => {
             if (present) {
               tpl.fields = tpl.fields.filter((f) => f.name !== key);
               tpl.excludedFields = tpl.excludedFields.filter(
@@ -1592,7 +1594,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
               await this.saveSettings();
               new Notice(`[FFG] Added "${key}" to "${label}"`);
             }
-          });
+          })(); });
         });
       }
     }
@@ -3616,10 +3618,10 @@ class ConfirmModal extends Modal {
       text: "Confirm",
       cls: "mod-warning",
     });
-    confirm.addEventListener("click", async () => {
+    confirm.addEventListener("click", () => { void (async () => {
       this.close();
       await this.onConfirm();
-    });
+    })(); });
   }
 }
 
@@ -3794,13 +3796,13 @@ class MigrationConfirmModal extends Modal {
       text: "Proceed",
       cls: "mod-cta",
     });
-    confirm.addEventListener("click", async () => {
+    confirm.addEventListener("click", () => { void (async () => {
       this.close();
       await this.onConfirm({
         applySettings: this.applySettings,
         decisionChoices: this.decisionChoices,
       });
-    });
+    })(); });
   }
 
   private renderValue(v: unknown): string {
@@ -3992,7 +3994,7 @@ class ReconcileExcludeModal extends Modal {
             e.preventDefault();
             const file = this.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
-              this.app.workspace.getLeaf("tab").openFile(file);
+              void this.app.workspace.getLeaf("tab").openFile(file);
             }
           });
         }
@@ -4001,12 +4003,12 @@ class ReconcileExcludeModal extends Modal {
           text: "×",
           attr: { "aria-label": options.removeLabel(path) },
         });
-        removeBtn.addEventListener("click", async (e) => {
+        removeBtn.addEventListener("click", (e) => { void (async () => {
           e.preventDefault();
           e.stopPropagation();
           await setList(getList().filter((p) => p !== path));
           render();
-        });
+        })(); });
       }
     };
 
@@ -4147,7 +4149,7 @@ class FieldOccurrencesModal extends Modal {
       });
       pathLink.addEventListener("click", (e) => {
         e.preventDefault();
-        this.app.workspace.getLeaf("tab").openFile(occ.file);
+        void this.app.workspace.getLeaf("tab").openFile(occ.file);
       });
       const chips = head.createDiv("ffg-occurrence-chips");
       if (!occ.covered) {
@@ -4242,7 +4244,7 @@ class ConflictResolutionModal extends Modal {
 
     const openBtn = row.createEl("button", { text: "Open file" });
     openBtn.addEventListener("click", () => {
-      this.app.workspace.getLeaf("tab").openFile(current.file);
+      void this.app.workspace.getLeaf("tab").openFile(current.file);
     });
 
     const skip = row.createEl("button", { text: "Skip" });
@@ -4375,7 +4377,7 @@ function openLintScopePopover(
     }
   };
 
-  vaultCheck.addEventListener("change", async () => {
+  vaultCheck.addEventListener("change", () => { void (async () => {
     const list = plugin.settings.globalLintFields;
     if (vaultCheck.checked) {
       if (!list.includes(fieldName)) list.push(fieldName);
@@ -4384,7 +4386,7 @@ function openLintScopePopover(
     }
     await plugin.saveSettings();
     applyVaultOverride();
-  });
+  })(); });
 
   if (plugin.settings.folderTemplates.length > 0) {
     popover.createEl("div", {
@@ -4406,7 +4408,7 @@ function openLintScopePopover(
         text: tpl.name || "(unnamed template)",
         cls: "ffg-lint-popover-row-label",
       });
-      cb.addEventListener("change", async () => {
+      cb.addEventListener("change", () => { void (async () => {
         if (cb.checked) {
           if (!tpl.lintFields.includes(fieldName)) {
             tpl.lintFields.push(fieldName);
@@ -4416,7 +4418,7 @@ function openLintScopePopover(
           tpl.lintFields = tpl.lintFields.filter((n) => n !== fieldName);
         }
         await plugin.saveSettings();
-      });
+      })(); });
       templateRows.push({ row: tplRow, checkbox: cb });
     }
     applyVaultOverride();
@@ -4975,7 +4977,7 @@ class FfgSettingTab extends PluginSettingTab {
       }
     );
 
-    parent.createEl("h3", { text: "Global Templates" });
+    new Setting(parent).setName("Global templates").setHeading();
     parent.createEl("p", {
       text: "Folder-scoped templates that are not linked to a specific group. Group-linked templates live under their group below.",
       cls: "setting-item-description",
@@ -5018,7 +5020,7 @@ class FfgSettingTab extends PluginSettingTab {
     renderGlobalTemplates();
 
     new Setting(parent).addButton((btn) =>
-      btn.setButtonText("+ Add global template").onClick(async () => {
+      btn.setButtonText("+ Add global template").onClick(() => { void (async () => {
         this.plugin.settings.folderTemplates.push({
           id: Date.now().toString(36) + Math.random().toString(36).slice(2),
           name: "",
@@ -5032,10 +5034,10 @@ class FfgSettingTab extends PluginSettingTab {
         });
         await this.plugin.saveSettings();
         renderGlobalTemplates();
-      })
+      })(); })
     );
 
-    parent.createEl("h3", { text: "Groups" });
+    new Setting(parent).setName("Groups").setHeading();
 
     const groupsContainer = parent.createDiv("ffg-settings-groups");
     this.renderGroups(groupsContainer);
@@ -5043,7 +5045,7 @@ class FfgSettingTab extends PluginSettingTab {
     new Setting(parent).addButton((btn) =>
       btn
         .setButtonText("+ Add Group")
-        .onClick(async () => {
+        .onClick(() => { void (async () => {
           const newId =
             Date.now().toString(36) + Math.random().toString(36).slice(2);
           this.plugin.settings.groups.push({
@@ -5057,12 +5059,12 @@ class FfgSettingTab extends PluginSettingTab {
           this.groupExpansionState.set(newId, false);
           await this.plugin.saveSettings();
           this.renderGroups(groupsContainer);
-        })
+        })(); })
     );
   }
 
   private renderFieldsTab(parent: HTMLElement) {
-    parent.createEl("h3", { text: "Icon overrides" });
+    new Setting(parent).setName("Icon overrides").setHeading();
     parent.createEl("p", {
       text: "Replace the Properties panel icon for a given frontmatter key. Pick any Lucide icon. (Vault-wide cleanup rules live on the Cleanup tab; folder-scoped cleanup lives inside templates.)",
       cls: "setting-item-description",
@@ -5072,11 +5074,11 @@ class FfgSettingTab extends PluginSettingTab {
     this.renderIconOverrideList(iconListContainer);
 
     new Setting(parent).addButton((btn) =>
-      btn.setButtonText("+ Add icon override").onClick(async () => {
+      btn.setButtonText("+ Add icon override").onClick(() => { void (async () => {
         this.plugin.settings.iconOverrides.push({ name: "", icon: "" });
         await this.plugin.saveSettings();
         this.renderIconOverrideList(iconListContainer);
-      })
+      })(); })
     );
   }
 
@@ -5141,12 +5143,12 @@ class FfgSettingTab extends PluginSettingTab {
       btn
         .setIcon("trash")
         .setTooltip("Delete override")
-        .onClick(async () => {
+        .onClick(() => { void (async () => {
           this.plugin.settings.iconOverrides =
             this.plugin.settings.iconOverrides.filter((o) => o !== override);
           await this.plugin.saveSettings();
           this.renderIconOverrideList(container);
-        })
+        })(); })
     );
   }
 
@@ -5271,10 +5273,10 @@ class FfgSettingTab extends PluginSettingTab {
       text: "View scrub log",
       cls: "ffg-cleanup-log-btn",
     });
-    logBtn.addEventListener("click", async () => {
+    logBtn.addEventListener("click", () => { void (async () => {
       const entries = await this.plugin.readScrubLog();
       new ScrubLogModal(this.app, entries).open();
-    });
+    })(); });
 
     const refresh = async () => {
       resultsContainer.empty();
@@ -5326,7 +5328,7 @@ class FfgSettingTab extends PluginSettingTab {
 
   private renderMigrateFieldSection(parent: HTMLElement) {
     const section = parent.createDiv("ffg-migrate-section");
-    section.createEl("h3", { text: "Migrate field" });
+    new Setting(section).setName("Migrate field").setHeading();
     section.createEl("p", {
       text: "Copy values from one frontmatter field to another across the chosen scope, then delete the source. One-off use: consolidating two near-duplicate fields. Conflicts (files where the target already has a non-null/non-empty value) are resolved interactively if fewer than 6, or written to a checklist note in Inbox/ if 6 or more. Every migration is logged to the scrub log.",
       cls: "setting-item-description",
@@ -5806,14 +5808,14 @@ class FfgSettingTab extends PluginSettingTab {
           text: "×",
           attr: { "aria-label": "Remove ad-hoc field" },
         });
-        removeAdHoc.addEventListener("click", async (e) => {
+        removeAdHoc.addEventListener("click", (e) => { void (async () => {
           e.preventDefault();
           e.stopPropagation();
           this.plugin.settings.cleanupAdHocFields =
             this.plugin.settings.cleanupAdHocFields.filter((n) => n !== key);
           await this.plugin.saveSettings();
           await rescan();
-        });
+        })(); });
       }
 
       const lintCell = row.createEl("td", { cls: "ffg-cleanup-lint-cell" });
@@ -6027,10 +6029,10 @@ class FfgSettingTab extends PluginSettingTab {
         });
         setIcon(upBtn, "arrow-up");
         upBtn.disabled = !options.reorder.canMoveUp;
-        upBtn.addEventListener("click", async (e) => {
+        upBtn.addEventListener("click", (e) => { void (async () => {
           e.stopPropagation();
           await options.reorder!.onMoveUp();
-        });
+        })(); });
 
         const downBtn = actions.createEl("button", {
           cls: "ffg-template-card-action",
@@ -6038,17 +6040,17 @@ class FfgSettingTab extends PluginSettingTab {
         });
         setIcon(downBtn, "arrow-down");
         downBtn.disabled = !options.reorder.canMoveDown;
-        downBtn.addEventListener("click", async (e) => {
+        downBtn.addEventListener("click", (e) => { void (async () => {
           e.stopPropagation();
           await options.reorder!.onMoveDown();
-        });
+        })(); });
       }
       const trashBtn = actions.createEl("button", {
         cls: "ffg-template-card-action",
         attr: { "aria-label": "Delete template" },
       });
       setIcon(trashBtn, "trash");
-      trashBtn.addEventListener("click", async (e) => {
+      trashBtn.addEventListener("click", (e) => { void (async () => {
         e.stopPropagation();
         this.plugin.settings.folderTemplates =
           this.plugin.settings.folderTemplates.filter(
@@ -6057,7 +6059,7 @@ class FfgSettingTab extends PluginSettingTab {
         this.templateExpansionState.delete(tpl.id);
         await this.plugin.saveSettings();
         refresh();
-      });
+      })(); });
 
       body = card.createDiv("ffg-template-card-body");
       body.style.display = collapsed ? "none" : "";
@@ -6088,14 +6090,14 @@ class FfgSettingTab extends PluginSettingTab {
           btn
             .setIcon("trash")
             .setTooltip("Delete template")
-            .onClick(async () => {
+            .onClick(() => { void (async () => {
               this.plugin.settings.folderTemplates =
                 this.plugin.settings.folderTemplates.filter(
                   (t) => t.id !== tpl.id
                 );
               await this.plugin.saveSettings();
               refresh();
-            })
+            })(); })
         )
         .addText((text) =>
           text
@@ -6231,7 +6233,7 @@ class FfgSettingTab extends PluginSettingTab {
           attr: { "aria-label": "Delete path" },
         });
         setIcon(deleteBtn, "trash");
-        deleteBtn.addEventListener("click", async (e) => {
+        deleteBtn.addEventListener("click", (e) => { void (async () => {
           e.preventDefault();
           e.stopPropagation();
           tpl.pathPrefixes = tpl.pathPrefixes.filter((_, i) => i !== index);
@@ -6239,14 +6241,14 @@ class FfgSettingTab extends PluginSettingTab {
           renderTargetingSummary();
           await this.plugin.saveSettings();
           renderPaths();
-        });
+        })(); });
       });
 
       const addBtn = pathsContainer.createEl("button", {
         text: "+ Add path",
         cls: "ffg-add-field-btn",
       });
-      addBtn.addEventListener("click", async (e) => {
+      addBtn.addEventListener("click", (e) => { void (async () => {
         e.preventDefault();
         e.stopPropagation();
         tpl.pathPrefixes.push("");
@@ -6254,7 +6256,7 @@ class FfgSettingTab extends PluginSettingTab {
         renderTargetingSummary();
         await this.plugin.saveSettings();
         renderPaths();
-      });
+      })(); });
     };
     renderPaths();
 
@@ -6299,7 +6301,7 @@ class FfgSettingTab extends PluginSettingTab {
           attr: { "aria-label": "Delete exclude path" },
         });
         setIcon(deleteBtn, "trash");
-        deleteBtn.addEventListener("click", async (e) => {
+        deleteBtn.addEventListener("click", (e) => { void (async () => {
           e.preventDefault();
           e.stopPropagation();
           tpl.excludedPathPrefixes = tpl.excludedPathPrefixes.filter(
@@ -6309,14 +6311,14 @@ class FfgSettingTab extends PluginSettingTab {
           pathsHeaderName.setText(includePathsLabel());
           await this.plugin.saveSettings();
           renderExcludes();
-        });
+        })(); });
       });
 
       const addBtn = excludeContainer.createEl("button", {
         text: "+ Add exclude",
         cls: "ffg-add-field-btn",
       });
-      addBtn.addEventListener("click", async (e) => {
+      addBtn.addEventListener("click", (e) => { void (async () => {
         e.preventDefault();
         e.stopPropagation();
         if (!tpl.excludedPathPrefixes) tpl.excludedPathPrefixes = [];
@@ -6325,7 +6327,7 @@ class FfgSettingTab extends PluginSettingTab {
         pathsHeaderName.setText(includePathsLabel());
         await this.plugin.saveSettings();
         renderExcludes();
-      });
+      })(); });
     };
     renderExcludes();
 
@@ -6375,7 +6377,7 @@ class FfgSettingTab extends PluginSettingTab {
         new Notice(`[FFG] Body template not found: ${path}`);
         return;
       }
-      this.app.workspace.getLeaf("tab").openFile(file);
+      void this.app.workspace.getLeaf("tab").openFile(file);
     });
 
     const groupsHeader = targetingBody.createDiv("ffg-field-order-header");
@@ -6397,7 +6399,7 @@ class FfgSettingTab extends PluginSettingTab {
       groupSelect.createEl("option", { value: g.id, text: g.name || g.id });
     }
     groupSelect.value = tpl.group ?? "";
-    groupSelect.addEventListener("change", async () => {
+    groupSelect.addEventListener("change", () => { void (async () => {
       const newVal = groupSelect.value;
       if (newVal) tpl.group = newVal;
       else delete tpl.group;
@@ -6409,7 +6411,7 @@ class FfgSettingTab extends PluginSettingTab {
       }
       renderFields();
       renderTargetingSummary();
-    });
+    })(); });
 
     const renderLinkedGroups = () => {
       groupSelect.value = tpl.group ?? "";
@@ -6607,13 +6609,13 @@ class FfgSettingTab extends PluginSettingTab {
       text: "+ Add field",
       cls: "ffg-add-field-btn",
     });
-    addBtn.addEventListener("click", async (e) => {
+    addBtn.addEventListener("click", (e) => { void (async () => {
       e.preventDefault();
       e.stopPropagation();
       tpl.fields.push({ name: "", value: undefined });
       await this.plugin.saveSettings();
       refresh();
-    });
+    })(); });
   }
 
   private getPropertyType(key: string): string {
@@ -6685,14 +6687,14 @@ class FfgSettingTab extends PluginSettingTab {
           .forEach((el) => el.removeClass("ffg-template-field-drop-target"));
         row.addClass("ffg-template-field-drop-target");
       });
-      row.addEventListener("drop", async (e) => {
+      row.addEventListener("drop", (e) => { void (async () => {
         const raw = e.dataTransfer?.getData("application/x-ffg-field");
         if (!raw) return;
         e.preventDefault();
         const fromIndex = parseInt(raw, 10);
         if (Number.isNaN(fromIndex) || fromIndex === reorder.index) return;
         await reorder.onReorder(fromIndex, reorder.index);
-      });
+      })(); });
     }
 
     if (origin) {
@@ -6770,7 +6772,7 @@ class FfgSettingTab extends PluginSettingTab {
       },
     });
     setIcon(eyeBtn, isExcluded ? "eye-off" : "eye");
-    eyeBtn.addEventListener("click", async (e) => {
+    eyeBtn.addEventListener("click", (e) => { void (async () => {
       e.preventDefault();
       e.stopPropagation();
       const key = nameRef();
@@ -6790,7 +6792,7 @@ class FfgSettingTab extends PluginSettingTab {
           : "Showing by default. Click to hide by default."
       );
       await this.plugin.saveSettings();
-    });
+    })(); });
 
     const isLinted = tpl.lintFields.includes(nameRef());
     const eraserBtn = row.createEl("button", {
@@ -6803,7 +6805,7 @@ class FfgSettingTab extends PluginSettingTab {
     });
     setIcon(eraserBtn, "sparkles");
     if (isLinted) eraserBtn.addClass("active");
-    eraserBtn.addEventListener("click", async (e) => {
+    eraserBtn.addEventListener("click", (e) => { void (async () => {
       e.preventDefault();
       e.stopPropagation();
       const key = nameRef();
@@ -6822,7 +6824,7 @@ class FfgSettingTab extends PluginSettingTab {
           : "Cleanup this field when null"
       );
       await this.plugin.saveSettings();
-    });
+    })(); });
 
     // "Sort into group" toggle: when on, this field joins the group display in
     // the Properties panel. When off, the field renders outside any group.
@@ -6838,7 +6840,7 @@ class FfgSettingTab extends PluginSettingTab {
       });
       setIcon(groupToggle, isInGroup ? "folder" : "folder-x");
       if (isInGroup) groupToggle.addClass("active");
-      groupToggle.addEventListener("click", async (e) => {
+      groupToggle.addEventListener("click", (e) => { void (async () => {
         e.preventDefault();
         e.stopPropagation();
         const key = nameRef();
@@ -6862,7 +6864,7 @@ class FfgSettingTab extends PluginSettingTab {
         );
         await this.plugin.saveSettings();
         onFieldsChanged?.();
-      });
+      })(); });
     }
 
     if (!origin && explicit) {
@@ -6871,7 +6873,7 @@ class FfgSettingTab extends PluginSettingTab {
         attr: { "aria-label": "Delete field" },
       });
       setIcon(deleteBtn, "trash");
-      deleteBtn.addEventListener("click", async (e) => {
+      deleteBtn.addEventListener("click", (e) => { void (async () => {
         e.preventDefault();
         e.stopPropagation();
         const target = explicit;
@@ -6886,7 +6888,7 @@ class FfgSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         onFieldsChanged?.();
         refresh();
-      });
+      })(); });
     }
   }
 
@@ -7110,37 +7112,37 @@ class FfgSettingTab extends PluginSettingTab {
             .setIcon("arrow-up")
             .setTooltip("Move up")
             .setDisabled(index === 0)
-            .onClick(async () => {
+            .onClick(() => { void (async () => {
               const current = getList();
               if (index <= 0) return;
               [current[index - 1], current[index]] = [current[index], current[index - 1]];
               await setList(current);
               render();
-            })
+            })(); })
         );
         setting.addExtraButton((btn) =>
           btn
             .setIcon("arrow-down")
             .setTooltip("Move down")
             .setDisabled(index === list.length - 1)
-            .onClick(async () => {
+            .onClick(() => { void (async () => {
               const current = getList();
               if (index >= current.length - 1) return;
               [current[index], current[index + 1]] = [current[index + 1], current[index]];
               await setList(current);
               render();
-            })
+            })(); })
         );
         setting.addExtraButton((btn) =>
           btn
             .setIcon("trash")
             .setTooltip("Remove")
-            .onClick(async () => {
+            .onClick(() => { void (async () => {
               const current = getList();
               current.splice(index, 1);
               await setList(current);
               render();
-            })
+            })(); })
         );
         setting.addText((text) => {
           // Per-keystroke path: mutate the live list and persist debounced.
@@ -7182,12 +7184,12 @@ class FfgSettingTab extends PluginSettingTab {
         text: "+ Add Field",
         cls: "ffg-add-field-btn",
       });
-      addBtn.addEventListener("click", async () => {
+      addBtn.addEventListener("click", () => { void (async () => {
         const current = getList();
         current.push("");
         await setList(current);
         render();
-      });
+      })(); });
     };
     render();
   }
@@ -7250,7 +7252,7 @@ class FfgSettingTab extends PluginSettingTab {
     });
     setIcon(upBtn, "arrow-up");
     if (index === 0) upBtn.disabled = true;
-    upBtn.addEventListener("click", async (e) => {
+    upBtn.addEventListener("click", (e) => { void (async () => {
       e.stopPropagation();
       const groups = this.plugin.settings.groups;
       const i = groups.findIndex((g) => g.id === group.id);
@@ -7258,7 +7260,7 @@ class FfgSettingTab extends PluginSettingTab {
       [groups[i - 1], groups[i]] = [groups[i], groups[i - 1]];
       await this.plugin.saveSettings();
       this.renderGroups(container);
-    });
+    })(); });
 
     const downBtn = actions.createEl("button", {
       cls: "ffg-group-card-action",
@@ -7266,7 +7268,7 @@ class FfgSettingTab extends PluginSettingTab {
     });
     setIcon(downBtn, "arrow-down");
     if (index === total - 1) downBtn.disabled = true;
-    downBtn.addEventListener("click", async (e) => {
+    downBtn.addEventListener("click", (e) => { void (async () => {
       e.stopPropagation();
       const groups = this.plugin.settings.groups;
       const i = groups.findIndex((g) => g.id === group.id);
@@ -7274,14 +7276,14 @@ class FfgSettingTab extends PluginSettingTab {
       [groups[i], groups[i + 1]] = [groups[i + 1], groups[i]];
       await this.plugin.saveSettings();
       this.renderGroups(container);
-    });
+    })(); });
 
     const trashBtn = actions.createEl("button", {
       cls: "ffg-group-card-action",
       attr: { "aria-label": "Delete group" },
     });
     setIcon(trashBtn, "trash");
-    trashBtn.addEventListener("click", async (e) => {
+    trashBtn.addEventListener("click", (e) => { void (async () => {
       e.stopPropagation();
       this.plugin.settings.groups = this.plugin.settings.groups.filter(
         (g) => g.id !== group.id
@@ -7289,7 +7291,7 @@ class FfgSettingTab extends PluginSettingTab {
       this.groupExpansionState.delete(group.id);
       await this.plugin.saveSettings();
       this.renderGroups(container);
-    });
+    })(); });
 
     const body = card.createDiv("ffg-group-card-body");
     body.style.display = collapsed ? "none" : "";
@@ -7313,11 +7315,11 @@ class FfgSettingTab extends PluginSettingTab {
     matcherSelect.createEl("option", { value: "unified", text: "Field list" });
     matcherSelect.createEl("option", { value: "regex", text: "Regex" });
     matcherSelect.value = group.matcherType;
-    matcherSelect.addEventListener("change", async () => {
+    matcherSelect.addEventListener("change", () => { void (async () => {
       group.matcherType = matcherSelect.value as StoredGroupConfig["matcherType"];
       await this.plugin.saveSettings();
       this.renderGroups(container);
-    });
+    })(); });
     const foldSelect = matchRow.createEl("select", { cls: "dropdown" });
     foldSelect.createEl("option", {
       value: "true",
@@ -7328,10 +7330,10 @@ class FfgSettingTab extends PluginSettingTab {
       text: "Expanded by default",
     });
     foldSelect.value = group.defaultFolded ? "true" : "false";
-    foldSelect.addEventListener("change", async () => {
+    foldSelect.addEventListener("change", () => { void (async () => {
       group.defaultFolded = foldSelect.value === "true";
       await this.plugin.saveSettings();
-    });
+    })(); });
 
     // When matcher entries change, linked templates need to re-render too
     // (so renamed/added literals flow into their inherited-fields list).
@@ -7416,7 +7418,7 @@ class FfgSettingTab extends PluginSettingTab {
         text: "+ Add template",
         cls: "ffg-add-field-btn",
       });
-      addBtn.addEventListener("click", async (e) => {
+      addBtn.addEventListener("click", (e) => { void (async () => {
         e.preventDefault();
         e.stopPropagation();
         this.plugin.settings.folderTemplates.push({
@@ -7434,7 +7436,7 @@ class FfgSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         render();
         onChange?.();
-      });
+      })(); });
     };
     render();
   }
@@ -7543,14 +7545,14 @@ class FfgSettingTab extends PluginSettingTab {
       const remove = pill.createSpan({ cls: "ffg-pill-remove", text: "×" });
       remove.setAttribute("aria-label", `Remove ${value}`);
       remove.setAttribute("role", "button");
-      remove.addEventListener("click", async (e) => {
+      remove.addEventListener("click", (e) => { void (async () => {
         e.preventDefault();
         e.stopPropagation();
         const idx = group.matcherValues.indexOf(value);
         if (idx >= 0) group.matcherValues.splice(idx, 1);
         pill.remove();
         await this.plugin.saveSettings();
-      });
+      })(); });
     };
 
     const commit = async () => {
