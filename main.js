@@ -895,7 +895,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         }
         m.addedNodes.forEach((node) => {
           var _a, _b;
-          if (!(node instanceof HTMLElement)) return;
+          if (!node.instanceOf(HTMLElement)) return;
           if ((_a = node.matches) == null ? void 0 : _a.call(node, ".metadata-container")) containers.add(node);
           (_b = node.querySelectorAll) == null ? void 0 : _b.call(node, ".metadata-container").forEach((c) => containers.add(c));
         });
@@ -1231,20 +1231,20 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     return (_a = firstProp == null ? void 0 : firstProp.parentElement) != null ? _a : null;
   }
   createGroupHeader(g, container) {
-    const header = document.createElement("div");
+    const header = createDiv();
     header.className = "ffg-group-header";
     header.dataset.groupId = g.id;
-    const chevron = document.createElement("span");
+    const chevron = createSpan();
     chevron.className = "ffg-chevron";
     (0, import_obsidian.setIcon)(chevron, "chevron-right");
     chevron.dataset.iconState = "chevron-right";
-    const name = document.createElement("span");
+    const name = createSpan();
     name.className = "ffg-name";
     name.textContent = g.name;
-    const count = document.createElement("span");
+    const count = createSpan();
     count.className = "ffg-count";
     count.textContent = "(0)";
-    const settingsBtn = document.createElement("span");
+    const settingsBtn = createSpan();
     settingsBtn.className = "ffg-group-settings";
     settingsBtn.setAttribute("role", "button");
     settingsBtn.setAttribute("aria-label", `${g.name} settings`);
@@ -1356,7 +1356,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     for (let depth = 0; depth < 3 && cursor; depth++) {
       let sib = cursor.previousElementSibling;
       while (sib) {
-        if (sib instanceof HTMLElement) {
+        if (sib.instanceOf(HTMLElement)) {
           if (sib.classList.contains("metadata-properties-heading")) {
             headings.add(sib);
             break;
@@ -1400,9 +1400,9 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       e.stopPropagation();
       e.stopImmediatePropagation();
     };
-    const actions = document.createElement("div");
+    const actions = createDiv();
     actions.className = "ffg-panel-actions";
-    const refresh = document.createElement("div");
+    const refresh = createDiv();
     refresh.className = "ffg-settings-gear ffg-settings-refresh";
     refresh.setAttribute("aria-label", "Reconcile and reload this file from disk");
     refresh.setAttribute("role", "button");
@@ -1417,7 +1417,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
       },
       true
     );
-    const gear = document.createElement("div");
+    const gear = createDiv();
     gear.className = "ffg-settings-gear";
     gear.setAttribute("aria-label", "Foldable Frontmatter Groups settings");
     gear.setAttribute("role", "button");
@@ -2135,7 +2135,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         }
       }
       if (allClear) return;
-      await new Promise((r) => setTimeout(r, intervalMs));
+      await new Promise((r) => window.setTimeout(r, intervalMs));
     }
   }
   // ── Field migration ──────────────────────────────────────────────────────
@@ -2849,11 +2849,11 @@ var MigrationConfirmModal = class extends import_obsidian.Modal {
         `Also update plugin settings (${settingsTotal} reference${settingsTotal === 1 ? "" : "s"})`
       );
       const detailWrap = sweepWrap.createDiv("ffg-migrate-sweep-detail");
-      detailWrap.style.display = "none";
+      detailWrap.setCssStyles({ display: "none" });
       const renderDetail = () => {
         detailWrap.empty();
         if (this.scan.settingsPlan.cleanUpdates.length > 0) {
-          detailWrap.createEl("div", {
+          detailWrap.createDiv({
             text: "Automatic updates",
             cls: "ffg-migrate-sweep-section"
           });
@@ -2863,21 +2863,21 @@ var MigrationConfirmModal = class extends import_obsidian.Modal {
           }
         }
         if (this.scan.settingsPlan.decisions.length > 0) {
-          detailWrap.createEl("div", {
+          detailWrap.createDiv({
             text: "Decisions required",
             cls: "ffg-migrate-sweep-section ffg-migrate-sweep-decisions"
           });
           for (const d of this.scan.settingsPlan.decisions) {
             const row2 = detailWrap.createDiv("ffg-migrate-decision");
-            row2.createEl("div", {
+            row2.createDiv({
               text: d.label,
               cls: "ffg-migrate-decision-label"
             });
             const values = row2.createDiv("ffg-migrate-decision-values");
-            values.createEl("div", {
+            values.createDiv({
               text: `source: ${this.renderValue(d.sourceValue)}`
             });
-            values.createEl("div", {
+            values.createDiv({
               text: d.targetHadEntry ? `target: ${this.renderValue(d.targetValue)}` : "target: (no entry \u2014 would gain source's seed)"
             });
             const choices = row2.createDiv("ffg-migrate-decision-choices");
@@ -2913,7 +2913,7 @@ var MigrationConfirmModal = class extends import_obsidian.Modal {
       });
       if (this.applySettings) {
         checkbox.checked = true;
-        detailWrap.style.display = "";
+        detailWrap.setCssStyles({ display: "" });
         renderDetail();
       }
     }
@@ -3057,7 +3057,7 @@ var ReconcileExcludeModal = class extends import_obsidian.Modal {
       list.empty();
       const entries = getList().slice().sort((a, b) => a.localeCompare(b));
       if (entries.length === 0) {
-        list.createEl("div", {
+        list.createDiv({
           text: options.emptyText,
           cls: "ffg-exclude-empty"
         });
@@ -3093,17 +3093,19 @@ var ReconcileExcludeModal = class extends import_obsidian.Modal {
         });
       }
     };
-    const onAccept = async (value) => {
-      const path = normalize(value);
-      if (!path) return;
-      const current = getList();
-      if (current.includes(path)) {
+    const onAccept = (value) => {
+      void (async () => {
+        const path = normalize(value);
+        if (!path) return;
+        const current = getList();
+        if (current.includes(path)) {
+          input.value = "";
+          return;
+        }
+        await setList([...current, path]);
         input.value = "";
-        return;
-      }
-      await setList([...current, path]);
-      input.value = "";
-      render();
+        render();
+      })();
     };
     if (isFolder) {
       new FolderPathSuggest(this.app, input, onAccept);
@@ -3145,7 +3147,7 @@ var FieldOccurrencesModal = class extends import_obsidian.Modal {
       cls: "setting-item-description"
     });
     if (total === 0) {
-      this.contentEl.createEl("div", {
+      this.contentEl.createDiv({
         text: "No notes in scope carry this field.",
         cls: "ffg-cleanup-empty"
       });
@@ -3189,7 +3191,7 @@ var FieldOccurrencesModal = class extends import_obsidian.Modal {
       return true;
     });
     if (filtered.length === 0) {
-      list.createEl("div", {
+      list.createDiv({
         text: `No ${this.filter} entries.`,
         cls: "ffg-cleanup-empty"
       });
@@ -3208,18 +3210,18 @@ var FieldOccurrencesModal = class extends import_obsidian.Modal {
       });
       const chips = head.createDiv("ffg-occurrence-chips");
       if (!occ.covered) {
-        chips.createEl("span", {
+        chips.createSpan({
           cls: "ffg-occurrence-chip ffg-occurrence-chip-uncovered",
           text: "uncovered"
         });
       }
       if (occ.isNull) {
-        chips.createEl("span", {
+        chips.createSpan({
           cls: "ffg-occurrence-chip ffg-occurrence-chip-null",
           text: "null"
         });
       }
-      const valueEl = row.createEl("div", { cls: "ffg-occurrence-value" });
+      const valueEl = row.createDiv({ cls: "ffg-occurrence-value" });
       valueEl.setText(this.renderValue(occ.value));
     }
   }
@@ -3262,7 +3264,7 @@ var ConflictResolutionModal = class extends import_obsidian.Modal {
     });
     this.contentEl.createEl("p", { text: current.file.path });
     const sourceBox = this.contentEl.createDiv("ffg-conflict-value");
-    sourceBox.createEl("div", {
+    sourceBox.createDiv({
       text: `${this.sourceField} (source)`,
       cls: "ffg-conflict-label"
     });
@@ -3270,7 +3272,7 @@ var ConflictResolutionModal = class extends import_obsidian.Modal {
       text: this.renderValue(current.sourceValue)
     });
     const targetBox = this.contentEl.createDiv("ffg-conflict-value");
-    targetBox.createEl("div", {
+    targetBox.createDiv({
       text: `${this.targetField} (target)`,
       cls: "ffg-conflict-label"
     });
@@ -3344,10 +3346,10 @@ function openLintScopePopover(plugin, fieldName, anchor, onChange) {
   doc.querySelectorAll(".ffg-lint-popover").forEach((el) => el.remove());
   const popover = doc.body.createDiv({ cls: "ffg-lint-popover" });
   const rect = anchor.getBoundingClientRect();
-  popover.style.position = "fixed";
+  popover.setCssStyles({ position: "fixed" });
   popover.style.top = `${rect.bottom + 6}px`;
   popover.style.left = `${Math.max(8, rect.left)}px`;
-  popover.style.zIndex = "2147483000";
+  popover.setCssStyles({ zIndex: "2147483000" });
   let closed = false;
   const close = () => {
     if (closed) return;
@@ -3366,7 +3368,7 @@ function openLintScopePopover(plugin, fieldName, anchor, onChange) {
   const escapeHandler = (e) => {
     if (e.key === "Escape") close();
   };
-  popover.createEl("div", {
+  popover.createDiv({
     cls: "ffg-lint-popover-title",
     text: `Cleanup "${fieldName}" when null`
   });
@@ -3376,7 +3378,7 @@ function openLintScopePopover(plugin, fieldName, anchor, onChange) {
     cls: "ffg-lint-popover-check"
   });
   vaultCheck.checked = plugin.settings.globalLintFields.includes(fieldName);
-  vaultRow.createEl("span", {
+  vaultRow.createSpan({
     text: "Vault-wide",
     cls: "ffg-lint-popover-row-label ffg-lint-popover-vault"
   });
@@ -3401,7 +3403,7 @@ function openLintScopePopover(plugin, fieldName, anchor, onChange) {
     })();
   });
   if (plugin.settings.folderTemplates.length > 0) {
-    popover.createEl("div", {
+    popover.createDiv({
       cls: "ffg-lint-popover-section",
       text: "Templates"
     });
@@ -3416,7 +3418,7 @@ function openLintScopePopover(plugin, fieldName, anchor, onChange) {
         cls: "ffg-lint-popover-check"
       });
       cb.checked = tpl.lintFields.includes(fieldName);
-      tplRow.createEl("span", {
+      tplRow.createSpan({
         text: tpl.name || "(unnamed template)",
         cls: "ffg-lint-popover-row-label"
       });
@@ -3437,7 +3439,7 @@ function openLintScopePopover(plugin, fieldName, anchor, onChange) {
     }
     applyVaultOverride();
   } else {
-    popover.createEl("div", {
+    popover.createDiv({
       cls: "ffg-lint-popover-empty",
       text: "No templates defined yet."
     });
@@ -3512,7 +3514,7 @@ var ScrubLogModal = class extends import_obsidian.Modal {
         type: "application/json"
       });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
+      const a = createEl("a");
       a.href = url;
       const fromStr = fromInput.value || "all";
       const toStr = toInput.value || "now";
@@ -3553,7 +3555,7 @@ var ScrubLogModal = class extends import_obsidian.Modal {
       text: `${entry.files.length} file${entry.files.length === 1 ? "" : "s"} \xB7 ${scopeLabel}`
     });
     const details = item.createDiv("ffg-log-item-details");
-    details.style.display = "none";
+    details.setCssStyles({ display: "none" });
     head.addEventListener("click", () => {
       if (details.style.display === "none") {
         if (!details.dataset.rendered) {
@@ -3567,9 +3569,9 @@ var ScrubLogModal = class extends import_obsidian.Modal {
           }
           details.dataset.rendered = "1";
         }
-        details.style.display = "";
+        details.setCssStyles({ display: "" });
       } else {
-        details.style.display = "none";
+        details.setCssStyles({ display: "none" });
       }
     });
   }
@@ -3639,12 +3641,12 @@ var MarkdownFilePathSuggest = class extends import_obsidian.AbstractInputSuggest
     el.addClass("ffg-md-file-suggestion");
     if (this.folderNoteSet.has(value)) {
       el.addClass("ffg-md-file-suggestion-folder-note");
-      el.createEl("span", {
+      el.createSpan({
         cls: "ffg-md-file-suggestion-badge",
         text: "MOC"
       });
     }
-    el.createEl("span", {
+    el.createSpan({
       cls: "ffg-md-file-suggestion-path",
       text: value
     });
@@ -3883,7 +3885,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         (t) => !t.group
       );
       if (globals.length === 0) {
-        globalTemplatesContainer.createEl("div", {
+        globalTemplatesContainer.createDiv({
           text: "No global templates yet.",
           cls: "ffg-inline-templates-empty"
         });
@@ -3989,10 +3991,12 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         this.plugin.saveSettingsDebounced();
       });
       text.inputEl.addClass("ffg-field-name-input");
-      new FrontmatterKeySuggest(this.app, text.inputEl, async (value) => {
-        override.name = value;
-        text.setValue(value);
-        await this.plugin.saveSettings();
+      new FrontmatterKeySuggest(this.app, text.inputEl, (value) => {
+        void (async () => {
+          override.name = value;
+          text.setValue(value);
+          await this.plugin.saveSettings();
+        })();
       });
     });
     const iconWrap = setting.controlEl.createDiv({ cls: "ffg-icon-input-wrap" });
@@ -4011,9 +4015,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       this.plugin.saveSettingsDebounced();
     };
     iconInput.addEventListener("input", () => void updateIcon(iconInput.value));
-    new LucideIconSuggest(this.app, iconInput, async (value) => {
-      iconInput.value = value;
-      await updateIcon(value);
+    new LucideIconSuggest(this.app, iconInput, (value) => {
+      void (async () => {
+        iconInput.value = value;
+        await updateIcon(value);
+      })();
     });
     setting.addExtraButton(
       (btn) => btn.setIcon("trash").setTooltip("Delete override").onClick(() => {
@@ -4048,10 +4054,12 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     folderInput.placeholder = "folder path (e.g. Notes/People/)";
     folderInput.value = this.cleanupScope;
     folderInput.style.display = this.cleanupScope === "" ? "none" : "";
-    new FolderPathSuggest(this.app, folderInput, async (value) => {
-      folderInput.value = value;
-      this.cleanupScope = value;
-      await refresh();
+    new FolderPathSuggest(this.app, folderInput, (value) => {
+      void (async () => {
+        folderInput.value = value;
+        this.cleanupScope = value;
+        await refresh();
+      })();
     });
     folderInput.addEventListener("blur", () => {
       if (this.cleanupScope !== folderInput.value.trim()) {
@@ -4062,9 +4070,9 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     scopeSelect.addEventListener("change", () => {
       if (scopeSelect.value === "vault") {
         this.cleanupScope = "";
-        folderInput.style.display = "none";
+        folderInput.setCssStyles({ display: "none" });
       } else {
-        folderInput.style.display = "";
+        folderInput.setCssStyles({ display: "" });
         this.cleanupScope = folderInput.value.trim();
       }
       void refresh();
@@ -4112,8 +4120,10 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       addInput.value = "";
       await refresh();
     };
-    new FrontmatterKeySuggest(this.app, addInput, async (value) => {
-      await commitAdd(value);
+    new FrontmatterKeySuggest(this.app, addInput, (value) => {
+      void (async () => {
+        await commitAdd(value);
+      })();
     });
     addInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
@@ -4139,7 +4149,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     });
     const refresh = async () => {
       resultsContainer.empty();
-      resultsContainer.createEl("div", {
+      resultsContainer.createDiv({
         text: "Scanning...",
         cls: "ffg-cleanup-empty"
       });
@@ -4172,7 +4182,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       } catch (e) {
         console.error("[FFG] scan error", e);
         resultsContainer.empty();
-        resultsContainer.createEl("div", {
+        resultsContainer.createDiv({
           text: "Scan failed; see console.",
           cls: "ffg-cleanup-empty"
         });
@@ -4222,9 +4232,9 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     scopeSelect.addEventListener("change", () => {
       if (scopeSelect.value === "vault") {
         this.migrateScope = "";
-        folderInput.style.display = "none";
+        folderInput.setCssStyles({ display: "none" });
       } else {
-        folderInput.style.display = "";
+        folderInput.setCssStyles({ display: "" });
         this.migrateScope = folderInput.value.trim();
       }
       lastScan = null;
@@ -4258,7 +4268,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       targetInput.value = value;
     });
     const previewBox = section.createDiv("ffg-migrate-preview");
-    previewBox.style.display = "none";
+    previewBox.setCssStyles({ display: "none" });
     const buttonsRow = section.createDiv("ffg-migrate-buttons");
     const scanBtn = buttonsRow.createEl("button", {
       text: "Scan",
@@ -4273,55 +4283,55 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     const renderPreview = () => {
       previewBox.empty();
       if (!lastScan) {
-        previewBox.style.display = "none";
+        previewBox.setCssStyles({ display: "none" });
         migrateBtn.disabled = true;
         return;
       }
-      previewBox.style.display = "";
+      previewBox.setCssStyles({ display: "" });
       const totalTouched = lastScan.cleanFiles.length + lastScan.conflicts.length;
       const settingsTotal = lastScan.settingsPlan.cleanUpdates.length + lastScan.settingsPlan.decisions.length;
       if (totalTouched === 0 && settingsTotal === 0) {
-        previewBox.createEl("div", {
+        previewBox.createDiv({
           text: `No files in scope have a non-empty \`${lastScan.sourceField}\` and no plugin settings reference it. Nothing to do.`
         });
         migrateBtn.disabled = true;
         return;
       }
-      const summary = previewBox.createEl("div", {
+      const summary = previewBox.createDiv({
         cls: "ffg-migrate-summary"
       });
       if (totalTouched === 0) {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `No files in scope have a non-empty \`${lastScan.sourceField}\`.`,
           cls: "ffg-migrate-note"
         });
-        summary.createEl("div", {
+        summary.createDiv({
           text: `${settingsTotal} settings reference(s) can still be cleaned up below.`
         });
       } else {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `${lastScan.cleanFiles.length} file(s) will migrate cleanly.`
         });
-        summary.createEl("div", {
+        summary.createDiv({
           text: `${lastScan.conflicts.length} conflict(s) (both source and target set).`
         });
       }
       if (lastScan.conflicts.length >= 6) {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `Conflicts will be written to a checklist note in Inbox/ for manual resolution.`,
           cls: "ffg-migrate-note"
         });
       } else if (lastScan.conflicts.length > 0) {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `Conflicts will be resolved interactively, one file at a time.`,
           cls: "ffg-migrate-note"
         });
       }
       if (lastScan.settingsRefs.length > 0) {
-        const warn = previewBox.createEl("div", {
+        const warn = previewBox.createDiv({
           cls: "ffg-migrate-warn"
         });
-        warn.createEl("div", {
+        warn.createDiv({
           text: `Heads up: \`${lastScan.sourceField}\` is also referenced in plugin settings (you'll get an option to update these in the confirmation step):`
         });
         const list = warn.createEl("ul");
@@ -4469,7 +4479,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     var _a;
     container.empty();
     if (allFields.size === 0) {
-      container.createEl("div", {
+      container.createDiv({
         text: "No fields to inspect. Toggle the eraser icon on a template field, or add an ad-hoc field above.",
         cls: "ffg-cleanup-empty"
       });
@@ -4560,7 +4570,6 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         dividerInserted = true;
       }
       const c = (_a = counts.get(key)) != null ? _a : { nullCount: 0, totalCount: 0, coveredNullCount: 0 };
-      const templates = templateFields.get(key);
       const isAdHoc = this.plugin.settings.cleanupAdHocFields.includes(key);
       const row = tbody.createEl("tr");
       const keyCell = row.createEl("td", { cls: "ffg-cleanup-key" });
@@ -4625,7 +4634,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       (0, import_obsidian.setIcon)(lintBtn, "sparkles");
       if (showFraction) {
         lintBtn.addClass("ffg-cleanup-lint-fractional");
-        lintBtn.createEl("span", {
+        lintBtn.createSpan({
           cls: "ffg-cleanup-lint-fraction",
           text: `${coverage.withCleanup.length}/${coverage.total.length}`
         });
@@ -4816,8 +4825,6 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     } else {
       body = card;
     }
-    const renderLinkedIndicator = () => {
-    };
     if (!options.collapsible) {
       new import_obsidian.Setting(body).setName("Name").addExtraButton(
         (btn) => btn.setIcon("trash").setTooltip("Delete template").onClick(() => {
@@ -4838,11 +4845,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       );
     }
     const fieldsHeader = body.createDiv("ffg-field-order-header");
-    fieldsHeader.createEl("div", {
+    fieldsHeader.createDiv({
       text: "Default Field Values",
       cls: "setting-item-name"
     });
-    fieldsHeader.createEl("div", {
+    fieldsHeader.createDiv({
       text: "Linked-group fields appear here automatically. Set a default value on any row, or add a field below. Use the chevrons on each row to reorder for this template.",
       cls: "setting-item-description"
     });
@@ -4900,11 +4907,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       return ((_a2 = tpl.excludedPathPrefixes) != null ? _a2 : []).some((p) => p.trim().length > 0) ? "Include paths" : "Folder paths";
     };
     const pathsHeader = targetingBody.createDiv("ffg-field-order-header");
-    const pathsHeaderName = pathsHeader.createEl("div", {
+    const pathsHeaderName = pathsHeader.createDiv({
       text: includePathsLabel(),
       cls: "setting-item-name"
     });
-    pathsHeader.createEl("div", {
+    pathsHeader.createDiv({
       text: "One or more path prefixes (e.g. Notes/People/). Empty string matches every note.",
       cls: "setting-item-description"
     });
@@ -4925,11 +4932,13 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
           renderTargetingSummary();
           this.plugin.saveSettingsDebounced();
         });
-        new FolderPathSuggest(this.app, input, async (value) => {
-          tpl.pathPrefixes[index] = value;
-          pathsInRow == null ? void 0 : pathsInRow();
-          renderTargetingSummary();
-          await this.plugin.saveSettings();
+        new FolderPathSuggest(this.app, input, (value) => {
+          void (async () => {
+            tpl.pathPrefixes[index] = value;
+            pathsInRow == null ? void 0 : pathsInRow();
+            renderTargetingSummary();
+            await this.plugin.saveSettings();
+          })();
         });
         const deleteBtn = row.createEl("button", {
           cls: "ffg-template-field-delete",
@@ -4966,11 +4975,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     };
     renderPaths();
     const excludeHeader = targetingBody.createDiv("ffg-field-order-header");
-    excludeHeader.createEl("div", {
+    excludeHeader.createDiv({
       text: "Exclude paths",
       cls: "setting-item-name"
     });
-    excludeHeader.createEl("div", {
+    excludeHeader.createDiv({
       text: "Files matching any exclude prefix are skipped, even if they match an include path above.",
       cls: "setting-item-description"
     });
@@ -4992,11 +5001,13 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
           pathsHeaderName.setText(includePathsLabel());
           this.plugin.saveSettingsDebounced();
         });
-        new FolderPathSuggest(this.app, input, async (value) => {
-          tpl.excludedPathPrefixes[index] = value;
-          renderTargetingSummary();
-          pathsHeaderName.setText(includePathsLabel());
-          await this.plugin.saveSettings();
+        new FolderPathSuggest(this.app, input, (value) => {
+          void (async () => {
+            tpl.excludedPathPrefixes[index] = value;
+            renderTargetingSummary();
+            pathsHeaderName.setText(includePathsLabel());
+            await this.plugin.saveSettings();
+          })();
         });
         const deleteBtn = row.createEl("button", {
           cls: "ffg-template-field-delete",
@@ -5036,11 +5047,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     };
     renderExcludes();
     const bodyHeader = targetingBody.createDiv("ffg-field-order-header");
-    bodyHeader.createEl("div", {
+    bodyHeader.createDiv({
       text: "Body template",
       cls: "setting-item-name"
     });
-    bodyHeader.createEl("div", {
+    bodyHeader.createDiv({
       text: "Optional markdown note whose body is inserted into matching notes when their body is blank. Fires on note creation and on move into a matching folder. Templater syntax is parsed if the Templater plugin is installed.",
       cls: "setting-item-description"
     });
@@ -5058,12 +5069,14 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       renderTargetingSummary();
       this.plugin.saveSettingsDebounced();
     });
-    new MarkdownFilePathSuggest(this.app, bodyInput, async (value) => {
-      bodyInput.value = value;
-      if (value) tpl.bodyTemplatePath = value;
-      else delete tpl.bodyTemplatePath;
-      renderTargetingSummary();
-      await this.plugin.saveSettings();
+    new MarkdownFilePathSuggest(this.app, bodyInput, (value) => {
+      void (async () => {
+        bodyInput.value = value;
+        if (value) tpl.bodyTemplatePath = value;
+        else delete tpl.bodyTemplatePath;
+        renderTargetingSummary();
+        await this.plugin.saveSettings();
+      })();
     });
     const openBtn = bodyRow.createEl("button", {
       text: "Open",
@@ -5084,11 +5097,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       void this.app.workspace.getLeaf("tab").openFile(file);
     });
     const groupsHeader = targetingBody.createDiv("ffg-field-order-header");
-    groupsHeader.createEl("div", {
+    groupsHeader.createDiv({
       text: "Group",
       cls: "setting-item-name"
     });
-    groupsHeader.createEl("div", {
+    groupsHeader.createDiv({
       text: "Pick the group that this template's fields belong to. Fields with Sort-into-group on will fold under this group's heading in the Properties panel. Pick (none) to leave this as a standalone (global) template.",
       cls: "setting-item-description"
     });
@@ -5115,10 +5128,6 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         renderTargetingSummary();
       })();
     });
-    const renderLinkedGroups = () => {
-      var _a2;
-      groupSelect.value = (_a2 = tpl.group) != null ? _a2 : "";
-    };
     renderFields();
   }
   // Build a template's render order: existing tpl.fieldOrder entries that are
@@ -5285,7 +5294,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
   renderTemplateFieldRow(container, tpl, fieldName, origin, explicit, refresh, reorder, onFieldsChanged) {
     var _a;
     const row = container.createDiv("ffg-template-field-row");
-    const handle = row.createEl("span", {
+    const handle = row.createSpan({
       cls: "ffg-template-field-drag" + (reorder ? "" : " ffg-template-field-drag-placeholder"),
       attr: reorder ? { "aria-label": "Drag to reorder", draggable: "true" } : { "aria-hidden": "true" }
     });
@@ -5326,7 +5335,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       });
     }
     if (origin) {
-      row.createEl("span", {
+      row.createSpan({
         cls: "ffg-template-field-name-linked",
         text: fieldName
       });
@@ -5345,13 +5354,15 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
       nameInput.addEventListener("blur", () => {
         onFieldsChanged == null ? void 0 : onFieldsChanged();
       });
-      new FrontmatterKeySuggest(this.app, nameInput, async (value) => {
-        if (!explicit) return;
-        explicit.name = value;
-        nameInput.value = value;
-        await this.plugin.saveSettings();
-        onFieldsChanged == null ? void 0 : onFieldsChanged();
-        refresh();
+      new FrontmatterKeySuggest(this.app, nameInput, (value) => {
+        void (async () => {
+          if (!explicit) return;
+          explicit.name = value;
+          nameInput.value = value;
+          await this.plugin.saveSettings();
+          onFieldsChanged == null ? void 0 : onFieldsChanged();
+          refresh();
+        })();
       });
     }
     const commitValue = async (newValue) => {
@@ -5735,10 +5746,12 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
           new FrontmatterKeySuggest(
             this.app,
             text.inputEl,
-            async (value) => {
-              const current = getList();
-              current[index] = value;
-              await setList(current);
+            (value) => {
+              void (async () => {
+                const current = getList();
+                current[index] = value;
+                await setList(current);
+              })();
             },
             {
               filter: () => {
@@ -5876,7 +5889,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     });
     const matchRow = body.createDiv("ffg-group-match-row");
     const matchLeft = matchRow.createDiv("ffg-group-match-left");
-    matchLeft.createEl("div", {
+    matchLeft.createDiv({
       text: "Match by",
       cls: "setting-item-name"
     });
@@ -5926,11 +5939,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
   }
   renderInlineTemplatesSection(card, group, onChange) {
     const header = card.createDiv("ffg-field-order-header");
-    header.createEl("div", {
+    header.createDiv({
       text: "Templates using this group",
       cls: "setting-item-name"
     });
-    header.createEl("div", {
+    header.createDiv({
       text: "Folder-scoped templates that automatically include this group's fields.",
       cls: "setting-item-description"
     });
@@ -5941,7 +5954,7 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
         (t) => t.group === group.id
       );
       if (linked.length === 0) {
-        listContainer.createEl("div", {
+        listContainer.createDiv({
           text: "No templates yet.",
           cls: "ffg-inline-templates-empty"
         });
@@ -6003,11 +6016,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
   }
   renderUnifiedMatcherSection(card, group, onChange) {
     const wildcardHeader = card.createDiv("ffg-field-order-header");
-    wildcardHeader.createEl("div", {
+    wildcardHeader.createDiv({
       text: "Wildcards",
       cls: "setting-item-name"
     });
-    wildcardHeader.createEl("div", {
+    wildcardHeader.createDiv({
       text: "Pattern entries ending in * (e.g. claude_* sweeps every claude_ field). Plain field names are also accepted as group literals, but you'll usually contribute literals via a linked template's Sort-into-group toggle.",
       cls: "setting-item-description"
     });
@@ -6039,11 +6052,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     );
     if (contributed.length === 0) return;
     const linkedHeader = container.createDiv("ffg-field-order-header");
-    linkedHeader.createEl("div", {
+    linkedHeader.createDiv({
       text: "Fields from linked templates",
       cls: "setting-item-name"
     });
-    linkedHeader.createEl("div", {
+    linkedHeader.createDiv({
       text: "Alphabetical summary of every field this group covers. Columns are the linked templates; checkmarks indicate the field is contributed by that template. Order in the Properties panel comes from the active file's matching template.",
       cls: "setting-item-description"
     });
@@ -6124,11 +6137,11 @@ var FfgSettingTab = class extends import_obsidian.PluginSettingTab {
     pillList = card.createDiv("ffg-pill-list");
     for (const v of group.matcherValues) renderPill(v);
     const fieldOrderHeader = card.createDiv("ffg-field-order-header");
-    fieldOrderHeader.createEl("div", {
+    fieldOrderHeader.createDiv({
       text: "Field order",
       cls: "setting-item-name"
     });
-    fieldOrderHeader.createEl("div", {
+    fieldOrderHeader.createDiv({
       text: "Manually order matching fields. Unlisted fields go after.",
       cls: "setting-item-description"
     });

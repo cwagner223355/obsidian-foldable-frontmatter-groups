@@ -247,44 +247,6 @@ function compileGroupMatcher(
   };
 }
 
-// One full vault scan to expand a group's matcher into the set of keys that
-// currently exist in vault frontmatter. Sorted for stable iteration order.
-// Use FoldableFrontmatterGroupsPlugin.cachedWildcardKeys() for hot paths.
-function computeGroupWildcardKeys(g: StoredGroupConfig, app: App): string[] {
-  const matches = compileGroupMatcher(g);
-  if (!matches) return [];
-  const matched = new Set<string>();
-  for (const file of app.vault.getMarkdownFiles()) {
-    const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!fm) continue;
-    for (const k of Object.keys(fm)) {
-      if (!k || k === "position") continue;
-      if (matched.has(k)) continue;
-      if (matches(k)) matched.add(k);
-    }
-  }
-  return Array.from(matched).sort();
-}
-
-function getGroupEffectiveFields(
-  g: StoredGroupConfig,
-  app: App,
-  templates?: FolderTemplate[]
-): string[] {
-  const contributedLiterals = templates
-    ? getGroupTemplateContributedLiterals(g, templates).map((e) => e.name)
-    : getGroupLiteralFields(g);
-  const seen = new Set(contributedLiterals);
-  const out = [...contributedLiterals];
-  for (const k of computeGroupWildcardKeys(g, app)) {
-    if (!seen.has(k)) {
-      out.push(k);
-      seen.add(k);
-    }
-  }
-  return out;
-}
-
 // Sort templates the way they appear on the Grouping tab: Global Templates
 // first (no group), then by each group's position in settings; within each
 // section preserve the templates' array order.
@@ -1124,7 +1086,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // Walks up to the closest workspace-leaf and matches via iterateAllLeaves.
   // Falls back to the active file if no match is found.
   private fileForContainer(container: HTMLElement): TFile | null {
-    const leafEl = container.closest(".workspace-leaf") as HTMLElement | null;
+    const leafEl = container.closest(".workspace-leaf");
     if (!leafEl) return this.app.workspace.getActiveFile();
     let found: TFile | null = null;
     this.app.workspace.iterateAllLeaves((leaf) => {
@@ -1227,14 +1189,14 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
 
       const containers = new Set<HTMLElement>();
       for (const m of mutations) {
-        const target = m.target as Node;
+        const target = m.target;
         if (target.nodeType === Node.ELEMENT_NODE) {
           const el = target as HTMLElement;
           const container = el.closest(".metadata-container") as HTMLElement | null;
           if (container) containers.add(container);
         }
         m.addedNodes.forEach((node) => {
-          if (!(node instanceof HTMLElement)) return;
+          if (!(node.instanceOf(HTMLElement))) return;
           if (node.matches?.(".metadata-container")) containers.add(node);
           node
             .querySelectorAll?.<HTMLElement>(".metadata-container")
@@ -1682,25 +1644,25 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   }
 
   private createGroupHeader(g: RuntimeGroup, container: HTMLElement): HTMLElement {
-    const header = document.createElement("div");
+    const header = createDiv();
     header.className = "ffg-group-header";
     header.dataset.groupId = g.id;
 
-    const chevron = document.createElement("span");
+    const chevron = createSpan();
     chevron.className = "ffg-chevron";
     setIcon(chevron, "chevron-right");
     chevron.dataset.iconState = "chevron-right";
 
-    const name = document.createElement("span");
+    const name = createSpan();
     name.className = "ffg-name";
     name.textContent = g.name;
 
-    const count = document.createElement("span");
+    const count = createSpan();
     count.className = "ffg-count";
     count.textContent = "(0)";
 
     // Small settings affordance: jumps straight to this group's settings card.
-    const settingsBtn = document.createElement("span");
+    const settingsBtn = createSpan();
     settingsBtn.className = "ffg-group-settings";
     settingsBtn.setAttribute("role", "button");
     settingsBtn.setAttribute("aria-label", `${g.name} settings`);
@@ -1834,7 +1796,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     for (let depth = 0; depth < 3 && cursor; depth++) {
       let sib: Element | null = cursor.previousElementSibling;
       while (sib) {
-        if (sib instanceof HTMLElement) {
+        if (sib.instanceOf(HTMLElement)) {
           if (sib.classList.contains("metadata-properties-heading")) {
             headings.add(sib);
             break;
@@ -1884,13 +1846,13 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       e.stopImmediatePropagation();
     };
 
-    const actions = document.createElement("div");
+    const actions = createDiv();
     actions.className = "ffg-panel-actions";
 
     // Reconcile this file now: backfill template defaults and lint, exactly as
     // the file-open / file-leave triggers do. Useful right after moving a file
     // into a folder that has a template. Then re-render grouping.
-    const refresh = document.createElement("div");
+    const refresh = createDiv();
     refresh.className = "ffg-settings-gear ffg-settings-refresh";
     refresh.setAttribute("aria-label", "Reconcile and reload this file from disk");
     refresh.setAttribute("role", "button");
@@ -1906,7 +1868,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       true
     );
 
-    const gear = document.createElement("div");
+    const gear = createDiv();
     gear.className = "ffg-settings-gear";
     gear.setAttribute("aria-label", "Foldable Frontmatter Groups settings");
     gear.setAttribute("role", "button");
@@ -2172,7 +2134,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     if (
       typeof value === "object" &&
       !Array.isArray(value) &&
-      Object.keys(value as object).length === 0
+      Object.keys(value).length === 0
     ) return true;
     return false;
   }
@@ -2774,7 +2736,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         }
       }
       if (allClear) return;
-      await new Promise((r) => setTimeout(r, intervalMs));
+      await new Promise((r) => window.setTimeout(r, intervalMs));
     }
   }
 
@@ -3712,12 +3674,12 @@ class MigrationConfirmModal extends Modal {
       );
 
       const detailWrap = sweepWrap.createDiv("ffg-migrate-sweep-detail");
-      detailWrap.style.display = "none";
+      detailWrap.setCssStyles({ display: "none" });
 
       const renderDetail = () => {
         detailWrap.empty();
         if (this.scan.settingsPlan.cleanUpdates.length > 0) {
-          detailWrap.createEl("div", {
+          detailWrap.createDiv({
             text: "Automatic updates",
             cls: "ffg-migrate-sweep-section",
           });
@@ -3727,21 +3689,21 @@ class MigrationConfirmModal extends Modal {
           }
         }
         if (this.scan.settingsPlan.decisions.length > 0) {
-          detailWrap.createEl("div", {
+          detailWrap.createDiv({
             text: "Decisions required",
             cls: "ffg-migrate-sweep-section ffg-migrate-sweep-decisions",
           });
           for (const d of this.scan.settingsPlan.decisions) {
             const row = detailWrap.createDiv("ffg-migrate-decision");
-            row.createEl("div", {
+            row.createDiv({
               text: d.label,
               cls: "ffg-migrate-decision-label",
             });
             const values = row.createDiv("ffg-migrate-decision-values");
-            values.createEl("div", {
+            values.createDiv({
               text: `source: ${this.renderValue(d.sourceValue)}`,
             });
-            values.createEl("div", {
+            values.createDiv({
               text: d.targetHadEntry
                 ? `target: ${this.renderValue(d.targetValue)}`
                 : "target: (no entry — would gain source's seed)",
@@ -3784,7 +3746,7 @@ class MigrationConfirmModal extends Modal {
       // Pre-check + expand if we entered settings-only mode in the constructor.
       if (this.applySettings) {
         checkbox.checked = true;
-        detailWrap.style.display = "";
+        detailWrap.setCssStyles({ display: "" });
         renderDetail();
       }
     }
@@ -3977,7 +3939,7 @@ class ReconcileExcludeModal extends Modal {
         .slice()
         .sort((a, b) => a.localeCompare(b));
       if (entries.length === 0) {
-        list.createEl("div", {
+        list.createDiv({
           text: options.emptyText,
           cls: "ffg-exclude-empty",
         });
@@ -4012,7 +3974,7 @@ class ReconcileExcludeModal extends Modal {
       }
     };
 
-    const onAccept = async (value: string) => {
+    const onAccept = (value: string) => { void (async () => {
       const path = normalize(value);
       if (!path) return;
       const current = getList();
@@ -4023,7 +3985,7 @@ class ReconcileExcludeModal extends Modal {
       await setList([...current, path]);
       input.value = "";
       render();
-    };
+    })(); };
 
     if (isFolder) {
       new FolderPathSuggest(this.app, input, onAccept);
@@ -4080,7 +4042,7 @@ class FieldOccurrencesModal extends Modal {
     });
 
     if (total === 0) {
-      this.contentEl.createEl("div", {
+      this.contentEl.createDiv({
         text: "No notes in scope carry this field.",
         cls: "ffg-cleanup-empty",
       });
@@ -4134,7 +4096,7 @@ class FieldOccurrencesModal extends Modal {
       return true;
     });
     if (filtered.length === 0) {
-      list.createEl("div", {
+      list.createDiv({
         text: `No ${this.filter} entries.`,
         cls: "ffg-cleanup-empty",
       });
@@ -4153,19 +4115,19 @@ class FieldOccurrencesModal extends Modal {
       });
       const chips = head.createDiv("ffg-occurrence-chips");
       if (!occ.covered) {
-        chips.createEl("span", {
+        chips.createSpan({
           cls: "ffg-occurrence-chip ffg-occurrence-chip-uncovered",
           text: "uncovered",
         });
       }
       if (occ.isNull) {
-        chips.createEl("span", {
+        chips.createSpan({
           cls: "ffg-occurrence-chip ffg-occurrence-chip-null",
           text: "null",
         });
       }
 
-      const valueEl = row.createEl("div", { cls: "ffg-occurrence-value" });
+      const valueEl = row.createDiv({ cls: "ffg-occurrence-value" });
       valueEl.setText(this.renderValue(occ.value));
     }
   }
@@ -4220,7 +4182,7 @@ class ConflictResolutionModal extends Modal {
     this.contentEl.createEl("p", { text: current.file.path });
 
     const sourceBox = this.contentEl.createDiv("ffg-conflict-value");
-    sourceBox.createEl("div", {
+    sourceBox.createDiv({
       text: `${this.sourceField} (source)`,
       cls: "ffg-conflict-label",
     });
@@ -4229,7 +4191,7 @@ class ConflictResolutionModal extends Modal {
     });
 
     const targetBox = this.contentEl.createDiv("ffg-conflict-value");
-    targetBox.createEl("div", {
+    targetBox.createDiv({
       text: `${this.targetField} (target)`,
       cls: "ffg-conflict-label",
     });
@@ -4324,11 +4286,11 @@ function openLintScopePopover(
 
   const popover = doc.body.createDiv({ cls: "ffg-lint-popover" });
   const rect = anchor.getBoundingClientRect();
-  popover.style.position = "fixed";
+  popover.setCssStyles({ position: "fixed" });
   popover.style.top = `${rect.bottom + 6}px`;
   popover.style.left = `${Math.max(8, rect.left)}px`;
   // Stack above Obsidian's settings overlay and any modal in the same window.
-  popover.style.zIndex = "2147483000";
+  popover.setCssStyles({ zIndex: "2147483000" });
 
   let closed = false;
   const close = () => {
@@ -4349,7 +4311,7 @@ function openLintScopePopover(
     if (e.key === "Escape") close();
   };
 
-  popover.createEl("div", {
+  popover.createDiv({
     cls: "ffg-lint-popover-title",
     text: `Cleanup "${fieldName}" when null`,
   });
@@ -4360,7 +4322,7 @@ function openLintScopePopover(
     cls: "ffg-lint-popover-check",
   });
   vaultCheck.checked = plugin.settings.globalLintFields.includes(fieldName);
-  vaultRow.createEl("span", {
+  vaultRow.createSpan({
     text: "Vault-wide",
     cls: "ffg-lint-popover-row-label ffg-lint-popover-vault",
   });
@@ -4389,7 +4351,7 @@ function openLintScopePopover(
   })(); });
 
   if (plugin.settings.folderTemplates.length > 0) {
-    popover.createEl("div", {
+    popover.createDiv({
       cls: "ffg-lint-popover-section",
       text: "Templates",
     });
@@ -4404,7 +4366,7 @@ function openLintScopePopover(
         cls: "ffg-lint-popover-check",
       });
       cb.checked = tpl.lintFields.includes(fieldName);
-      tplRow.createEl("span", {
+      tplRow.createSpan({
         text: tpl.name || "(unnamed template)",
         cls: "ffg-lint-popover-row-label",
       });
@@ -4423,7 +4385,7 @@ function openLintScopePopover(
     }
     applyVaultOverride();
   } else {
-    popover.createEl("div", {
+    popover.createDiv({
       cls: "ffg-lint-popover-empty",
       text: "No templates defined yet.",
     });
@@ -4513,7 +4475,7 @@ class ScrubLogModal extends Modal {
         type: "application/json",
       });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
+      const a = createEl("a");
       a.href = url;
       const fromStr = fromInput.value || "all";
       const toStr = toInput.value || "now";
@@ -4567,7 +4529,7 @@ class ScrubLogModal extends Modal {
     });
 
     const details = item.createDiv("ffg-log-item-details");
-    details.style.display = "none";
+    details.setCssStyles({ display: "none" });
 
     head.addEventListener("click", () => {
       if (details.style.display === "none") {
@@ -4582,9 +4544,9 @@ class ScrubLogModal extends Modal {
           }
           details.dataset.rendered = "1";
         }
-        details.style.display = "";
+        details.setCssStyles({ display: "" });
       } else {
-        details.style.display = "none";
+        details.setCssStyles({ display: "none" });
       }
     });
   }
@@ -4692,12 +4654,12 @@ class MarkdownFilePathSuggest extends AbstractInputSuggest<string> {
     el.addClass("ffg-md-file-suggestion");
     if (this.folderNoteSet.has(value)) {
       el.addClass("ffg-md-file-suggestion-folder-note");
-      el.createEl("span", {
+      el.createSpan({
         cls: "ffg-md-file-suggestion-badge",
         text: "MOC",
       });
     }
-    el.createEl("span", {
+    el.createSpan({
       cls: "ffg-md-file-suggestion-path",
       text: value,
     });
@@ -4990,7 +4952,7 @@ class FfgSettingTab extends PluginSettingTab {
         (t) => !t.group
       );
       if (globals.length === 0) {
-        globalTemplatesContainer.createEl("div", {
+        globalTemplatesContainer.createDiv({
           text: "No global templates yet.",
           cls: "ffg-inline-templates-empty",
         });
@@ -5108,11 +5070,11 @@ class FfgSettingTab extends PluginSettingTab {
           this.plugin.saveSettingsDebounced();
         });
       text.inputEl.addClass("ffg-field-name-input");
-      new FrontmatterKeySuggest(this.app, text.inputEl, async (value) => {
+      new FrontmatterKeySuggest(this.app, text.inputEl, (value) => { void (async () => {
         override.name = value;
         text.setValue(value);
         await this.plugin.saveSettings();
-      });
+      })(); });
     });
 
     const iconWrap = setting.controlEl.createDiv({ cls: "ffg-icon-input-wrap" });
@@ -5134,10 +5096,10 @@ class FfgSettingTab extends PluginSettingTab {
     };
 
     iconInput.addEventListener("input", () => void updateIcon(iconInput.value));
-    new LucideIconSuggest(this.app, iconInput, async (value) => {
+    new LucideIconSuggest(this.app, iconInput, (value) => { void (async () => {
       iconInput.value = value;
       await updateIcon(value);
-    });
+    })(); });
 
     setting.addExtraButton((btn) =>
       btn
@@ -5178,11 +5140,11 @@ class FfgSettingTab extends PluginSettingTab {
     folderInput.placeholder = "folder path (e.g. Notes/People/)";
     folderInput.value = this.cleanupScope;
     folderInput.style.display = this.cleanupScope === "" ? "none" : "";
-    new FolderPathSuggest(this.app, folderInput, async (value) => {
+    new FolderPathSuggest(this.app, folderInput, (value) => { void (async () => {
       folderInput.value = value;
       this.cleanupScope = value;
       await refresh();
-    });
+    })(); });
     folderInput.addEventListener("blur", () => {
       if (this.cleanupScope !== folderInput.value.trim()) {
         this.cleanupScope = folderInput.value.trim();
@@ -5193,9 +5155,9 @@ class FfgSettingTab extends PluginSettingTab {
     scopeSelect.addEventListener("change", () => {
       if (scopeSelect.value === "vault") {
         this.cleanupScope = "";
-        folderInput.style.display = "none";
+        folderInput.setCssStyles({ display: "none" });
       } else {
-        folderInput.style.display = "";
+        folderInput.setCssStyles({ display: "" });
         this.cleanupScope = folderInput.value.trim();
       }
       void refresh();
@@ -5250,9 +5212,9 @@ class FfgSettingTab extends PluginSettingTab {
       addInput.value = "";
       await refresh();
     };
-    new FrontmatterKeySuggest(this.app, addInput, async (value) => {
+    new FrontmatterKeySuggest(this.app, addInput, (value) => { void (async () => {
       await commitAdd(value);
-    });
+    })(); });
     addInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -5280,7 +5242,7 @@ class FfgSettingTab extends PluginSettingTab {
 
     const refresh = async () => {
       resultsContainer.empty();
-      resultsContainer.createEl("div", {
+      resultsContainer.createDiv({
         text: "Scanning...",
         cls: "ffg-cleanup-empty",
       });
@@ -5317,7 +5279,7 @@ class FfgSettingTab extends PluginSettingTab {
       } catch (e) {
         console.error("[FFG] scan error", e);
         resultsContainer.empty();
-        resultsContainer.createEl("div", {
+        resultsContainer.createDiv({
           text: "Scan failed; see console.",
           cls: "ffg-cleanup-empty",
         });
@@ -5371,9 +5333,9 @@ class FfgSettingTab extends PluginSettingTab {
     scopeSelect.addEventListener("change", () => {
       if (scopeSelect.value === "vault") {
         this.migrateScope = "";
-        folderInput.style.display = "none";
+        folderInput.setCssStyles({ display: "none" });
       } else {
-        folderInput.style.display = "";
+        folderInput.setCssStyles({ display: "" });
         this.migrateScope = folderInput.value.trim();
       }
       lastScan = null;
@@ -5411,7 +5373,7 @@ class FfgSettingTab extends PluginSettingTab {
     });
 
     const previewBox = section.createDiv("ffg-migrate-preview");
-    previewBox.style.display = "none";
+    previewBox.setCssStyles({ display: "none" });
 
     const buttonsRow = section.createDiv("ffg-migrate-buttons");
     const scanBtn = buttonsRow.createEl("button", {
@@ -5441,58 +5403,58 @@ class FfgSettingTab extends PluginSettingTab {
     const renderPreview = () => {
       previewBox.empty();
       if (!lastScan) {
-        previewBox.style.display = "none";
+        previewBox.setCssStyles({ display: "none" });
         migrateBtn.disabled = true;
         return;
       }
-      previewBox.style.display = "";
+      previewBox.setCssStyles({ display: "" });
       const totalTouched =
         lastScan.cleanFiles.length + lastScan.conflicts.length;
       const settingsTotal =
         lastScan.settingsPlan.cleanUpdates.length +
         lastScan.settingsPlan.decisions.length;
       if (totalTouched === 0 && settingsTotal === 0) {
-        previewBox.createEl("div", {
+        previewBox.createDiv({
           text: `No files in scope have a non-empty \`${lastScan.sourceField}\` and no plugin settings reference it. Nothing to do.`,
         });
         migrateBtn.disabled = true;
         return;
       }
-      const summary = previewBox.createEl("div", {
+      const summary = previewBox.createDiv({
         cls: "ffg-migrate-summary",
       });
       if (totalTouched === 0) {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `No files in scope have a non-empty \`${lastScan.sourceField}\`.`,
           cls: "ffg-migrate-note",
         });
-        summary.createEl("div", {
+        summary.createDiv({
           text: `${settingsTotal} settings reference(s) can still be cleaned up below.`,
         });
       } else {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `${lastScan.cleanFiles.length} file(s) will migrate cleanly.`,
         });
-        summary.createEl("div", {
+        summary.createDiv({
           text: `${lastScan.conflicts.length} conflict(s) (both source and target set).`,
         });
       }
       if (lastScan.conflicts.length >= 6) {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `Conflicts will be written to a checklist note in Inbox/ for manual resolution.`,
           cls: "ffg-migrate-note",
         });
       } else if (lastScan.conflicts.length > 0) {
-        summary.createEl("div", {
+        summary.createDiv({
           text: `Conflicts will be resolved interactively, one file at a time.`,
           cls: "ffg-migrate-note",
         });
       }
       if (lastScan.settingsRefs.length > 0) {
-        const warn = previewBox.createEl("div", {
+        const warn = previewBox.createDiv({
           cls: "ffg-migrate-warn",
         });
-        warn.createEl("div", {
+        warn.createDiv({
           text: `Heads up: \`${lastScan.sourceField}\` is also referenced in plugin settings (you'll get an option to update these in the confirmation step):`,
         });
         const list = warn.createEl("ul");
@@ -5665,7 +5627,7 @@ class FfgSettingTab extends PluginSettingTab {
     container.empty();
 
     if (allFields.size === 0) {
-      container.createEl("div", {
+      container.createDiv({
         text: "No fields to inspect. Toggle the eraser icon on a template field, or add an ad-hoc field above.",
         cls: "ffg-cleanup-empty",
       });
@@ -5776,7 +5738,6 @@ class FfgSettingTab extends PluginSettingTab {
       const c =
         counts.get(key) ??
         { nullCount: 0, totalCount: 0, coveredNullCount: 0 };
-      const templates = templateFields.get(key);
       const isAdHoc = this.plugin.settings.cleanupAdHocFields.includes(key);
 
       const row = tbody.createEl("tr");
@@ -5851,7 +5812,7 @@ class FfgSettingTab extends PluginSettingTab {
       setIcon(lintBtn, "sparkles");
       if (showFraction) {
         lintBtn.addClass("ffg-cleanup-lint-fractional");
-        lintBtn.createEl("span", {
+        lintBtn.createSpan({
           cls: "ffg-cleanup-lint-fraction",
           text: `${coverage.withCleanup.length}/${coverage.total.length}`,
         });
@@ -6077,10 +6038,6 @@ class FfgSettingTab extends PluginSettingTab {
     }
 
     // Multi-link indicator removed: templates now belong to at most one group.
-    const renderLinkedIndicator = () => {
-      /* no-op */
-    };
-
     // Name + delete now live in the card head. For non-collapsible (legacy)
     // mode, fall back to an inline Name setting in the body.
     if (!options.collapsible) {
@@ -6113,11 +6070,11 @@ class FfgSettingTab extends PluginSettingTab {
 
     // === Default Field Values (rendered FIRST in the new layout) ===
     const fieldsHeader = body.createDiv("ffg-field-order-header");
-    fieldsHeader.createEl("div", {
+    fieldsHeader.createDiv({
       text: "Default Field Values",
       cls: "setting-item-name",
     });
-    fieldsHeader.createEl("div", {
+    fieldsHeader.createDiv({
       text: "Linked-group fields appear here automatically. Set a default value on any row, or add a field below. Use the chevrons on each row to reorder for this template.",
       cls: "setting-item-description",
     });
@@ -6195,11 +6152,11 @@ class FfgSettingTab extends PluginSettingTab {
         : "Folder paths";
 
     const pathsHeader = targetingBody.createDiv("ffg-field-order-header");
-    const pathsHeaderName = pathsHeader.createEl("div", {
+    const pathsHeaderName = pathsHeader.createDiv({
       text: includePathsLabel(),
       cls: "setting-item-name",
     });
-    pathsHeader.createEl("div", {
+    pathsHeader.createDiv({
       text: "One or more path prefixes (e.g. Notes/People/). Empty string matches every note.",
       cls: "setting-item-description",
     });
@@ -6221,12 +6178,12 @@ class FfgSettingTab extends PluginSettingTab {
           renderTargetingSummary();
           this.plugin.saveSettingsDebounced();
         });
-        new FolderPathSuggest(this.app, input, async (value) => {
+        new FolderPathSuggest(this.app, input, (value) => { void (async () => {
           tpl.pathPrefixes[index] = value;
           pathsInRow?.();
           renderTargetingSummary();
           await this.plugin.saveSettings();
-        });
+        })(); });
 
         const deleteBtn = row.createEl("button", {
           cls: "ffg-template-field-delete",
@@ -6262,11 +6219,11 @@ class FfgSettingTab extends PluginSettingTab {
 
     // Exclude paths
     const excludeHeader = targetingBody.createDiv("ffg-field-order-header");
-    excludeHeader.createEl("div", {
+    excludeHeader.createDiv({
       text: "Exclude paths",
       cls: "setting-item-name",
     });
-    excludeHeader.createEl("div", {
+    excludeHeader.createDiv({
       text: "Files matching any exclude prefix are skipped, even if they match an include path above.",
       cls: "setting-item-description",
     });
@@ -6289,12 +6246,12 @@ class FfgSettingTab extends PluginSettingTab {
           pathsHeaderName.setText(includePathsLabel());
           this.plugin.saveSettingsDebounced();
         });
-        new FolderPathSuggest(this.app, input, async (value) => {
+        new FolderPathSuggest(this.app, input, (value) => { void (async () => {
           tpl.excludedPathPrefixes[index] = value;
           renderTargetingSummary();
           pathsHeaderName.setText(includePathsLabel());
           await this.plugin.saveSettings();
-        });
+        })(); });
 
         const deleteBtn = row.createEl("button", {
           cls: "ffg-template-field-delete",
@@ -6332,11 +6289,11 @@ class FfgSettingTab extends PluginSettingTab {
     renderExcludes();
 
     const bodyHeader = targetingBody.createDiv("ffg-field-order-header");
-    bodyHeader.createEl("div", {
+    bodyHeader.createDiv({
       text: "Body template",
       cls: "setting-item-name",
     });
-    bodyHeader.createEl("div", {
+    bodyHeader.createDiv({
       text: "Optional markdown note whose body is inserted into matching notes when their body is blank. Fires on note creation and on move into a matching folder. Templater syntax is parsed if the Templater plugin is installed.",
       cls: "setting-item-description",
     });
@@ -6354,13 +6311,13 @@ class FfgSettingTab extends PluginSettingTab {
       renderTargetingSummary();
       this.plugin.saveSettingsDebounced();
     });
-    new MarkdownFilePathSuggest(this.app, bodyInput, async (value) => {
+    new MarkdownFilePathSuggest(this.app, bodyInput, (value) => { void (async () => {
       bodyInput.value = value;
       if (value) tpl.bodyTemplatePath = value;
       else delete tpl.bodyTemplatePath;
       renderTargetingSummary();
       await this.plugin.saveSettings();
-    });
+    })(); });
     const openBtn = bodyRow.createEl("button", {
       text: "Open",
       cls: "ffg-template-body-open",
@@ -6381,11 +6338,11 @@ class FfgSettingTab extends PluginSettingTab {
     });
 
     const groupsHeader = targetingBody.createDiv("ffg-field-order-header");
-    groupsHeader.createEl("div", {
+    groupsHeader.createDiv({
       text: "Group",
       cls: "setting-item-name",
     });
-    groupsHeader.createEl("div", {
+    groupsHeader.createDiv({
       text: "Pick the group that this template's fields belong to. Fields with Sort-into-group on will fold under this group's heading in the Properties panel. Pick (none) to leave this as a standalone (global) template.",
       cls: "setting-item-description",
     });
@@ -6412,10 +6369,6 @@ class FfgSettingTab extends PluginSettingTab {
       renderFields();
       renderTargetingSummary();
     })(); });
-
-    const renderLinkedGroups = () => {
-      groupSelect.value = tpl.group ?? "";
-    };
 
     renderFields();
   }
@@ -6651,7 +6604,7 @@ class FfgSettingTab extends PluginSettingTab {
 
     // Always render the drag-handle slot so anonymous (just-added) rows align
     // with named rows. Drag interactions only attach when reorder is provided.
-    const handle = row.createEl("span", {
+    const handle = row.createSpan({
       cls:
         "ffg-template-field-drag" +
         (reorder ? "" : " ffg-template-field-drag-placeholder"),
@@ -6698,7 +6651,7 @@ class FfgSettingTab extends PluginSettingTab {
     }
 
     if (origin) {
-      row.createEl("span", {
+      row.createSpan({
         cls: "ffg-template-field-name-linked",
         text: fieldName,
       });
@@ -6717,14 +6670,14 @@ class FfgSettingTab extends PluginSettingTab {
       nameInput.addEventListener("blur", () => {
         onFieldsChanged?.();
       });
-      new FrontmatterKeySuggest(this.app, nameInput, async (value) => {
+      new FrontmatterKeySuggest(this.app, nameInput, (value) => { void (async () => {
         if (!explicit) return;
         explicit.name = value;
         nameInput.value = value;
         await this.plugin.saveSettings();
         onFieldsChanged?.();
         refresh();
-      });
+      })(); });
     }
 
     const commitValue = async (newValue: unknown) => {
@@ -7156,11 +7109,11 @@ class FfgSettingTab extends PluginSettingTab {
           new FrontmatterKeySuggest(
             this.app,
             text.inputEl,
-            async (value) => {
+            (value) => { void (async () => {
               const current = getList();
               current[index] = value;
               await setList(current);
-            },
+            })(); },
             {
               filter: () => {
                 const matcherFilter = suggesterFilter?.();
@@ -7307,7 +7260,7 @@ class FfgSettingTab extends PluginSettingTab {
 
     const matchRow = body.createDiv("ffg-group-match-row");
     const matchLeft = matchRow.createDiv("ffg-group-match-left");
-    matchLeft.createEl("div", {
+    matchLeft.createDiv({
       text: "Match by",
       cls: "setting-item-name",
     });
@@ -7365,11 +7318,11 @@ class FfgSettingTab extends PluginSettingTab {
     onChange?: () => void
   ) {
     const header = card.createDiv("ffg-field-order-header");
-    header.createEl("div", {
+    header.createDiv({
       text: "Templates using this group",
       cls: "setting-item-name",
     });
-    header.createEl("div", {
+    header.createDiv({
       text: "Folder-scoped templates that automatically include this group's fields.",
       cls: "setting-item-description",
     });
@@ -7381,7 +7334,7 @@ class FfgSettingTab extends PluginSettingTab {
         (t) => t.group === group.id
       );
       if (linked.length === 0) {
-        listContainer.createEl("div", {
+        listContainer.createDiv({
           text: "No templates yet.",
           cls: "ffg-inline-templates-empty",
         });
@@ -7451,11 +7404,11 @@ class FfgSettingTab extends PluginSettingTab {
     // templates' show-in-group rows). Raw entries are preserved as the user
     // types so empty rows can be created and edited.
     const wildcardHeader = card.createDiv("ffg-field-order-header");
-    wildcardHeader.createEl("div", {
+    wildcardHeader.createDiv({
       text: "Wildcards",
       cls: "setting-item-name",
     });
-    wildcardHeader.createEl("div", {
+    wildcardHeader.createDiv({
       text: "Pattern entries ending in * (e.g. claude_* sweeps every claude_ field). Plain field names are also accepted as group literals, but you'll usually contribute literals via a linked template's Sort-into-group toggle.",
       cls: "setting-item-description",
     });
@@ -7490,11 +7443,11 @@ class FfgSettingTab extends PluginSettingTab {
     if (contributed.length === 0) return;
 
     const linkedHeader = container.createDiv("ffg-field-order-header");
-    linkedHeader.createEl("div", {
+    linkedHeader.createDiv({
       text: "Fields from linked templates",
       cls: "setting-item-name",
     });
-    linkedHeader.createEl("div", {
+    linkedHeader.createDiv({
       text: "Alphabetical summary of every field this group covers. Columns are the linked templates; checkmarks indicate the field is contributed by that template. Order in the Properties panel comes from the active file's matching template.",
       cls: "setting-item-description",
     });
@@ -7589,11 +7542,11 @@ class FfgSettingTab extends PluginSettingTab {
     for (const v of group.matcherValues) renderPill(v);
 
     const fieldOrderHeader = card.createDiv("ffg-field-order-header");
-    fieldOrderHeader.createEl("div", {
+    fieldOrderHeader.createDiv({
       text: "Field order",
       cls: "setting-item-name",
     });
-    fieldOrderHeader.createEl("div", {
+    fieldOrderHeader.createDiv({
       text: "Manually order matching fields. Unlisted fields go after.",
       cls: "setting-item-description",
     });
