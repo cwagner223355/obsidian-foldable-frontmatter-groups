@@ -1,3 +1,4 @@
+/* Foldable Frontmatter Groups v1.5.2 styles */
 /* Virtual grouping: container becomes flex when active so child `order` works. */
 .metadata-container.ffg-active {
   display: flex;
