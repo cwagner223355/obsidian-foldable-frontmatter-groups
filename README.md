@@ -71,6 +71,12 @@ Reconcile is triggered only by you opening or leaving a note, never by a backgro
 
 Every remove-null, remove-all, and migrate action appends the removed `{ path, value }` pairs to `scrub-log.json` in the plugin folder (capped at 500 entries). The "View scrub log" modal renders them newest-first with a date-range JSON export. Recovery is manual (there is no one-click restore yet).
 
+## Support
+
+If Foldable Frontmatter Groups is useful to you, consider [buying me a coffee](https://ko-fi.com/S6S6Z9TE1).
+
+<a href='https://ko-fi.com/S6S6Z9TE1' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi2.png?v=3' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT license. See [LICENSE](LICENSE).
