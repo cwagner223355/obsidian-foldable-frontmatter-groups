@@ -577,6 +577,9 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     document
       .querySelectorAll(".ffg-panel-actions, .ffg-settings-gear")
       .forEach((el) => el.remove());
+    document
+      .querySelectorAll(".ffg-has-panel-actions")
+      .forEach((el) => el.classList.remove("ffg-has-panel-actions"));
   }
 
   // setTimeout wrapper whose callbacks are cancelled on unload.
@@ -589,7 +592,11 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      (await this.loadData()) as Partial<PluginSettings>
+    );
     if (!Array.isArray(this.settings.groups)) {
       this.settings.groups = DEFAULT_SETTINGS.groups;
     }
@@ -1192,7 +1199,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         const target = m.target;
         if (target.nodeType === Node.ELEMENT_NODE) {
           const el = target as HTMLElement;
-          const container = el.closest(".metadata-container") as HTMLElement | null;
+          const container = el.closest<HTMLElement>(".metadata-container");
           if (container) containers.add(container);
         }
         m.addedNodes.forEach((node) => {
@@ -1423,9 +1430,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     if (!this.settings.groupFoldingEnabled) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
-    const propRow = target.closest(
-      ".metadata-property"
-    ) as HTMLElement | null;
+    const propRow = target.closest<HTMLElement>(".metadata-property");
     if (!propRow) return;
     const key = propRow.dataset.propertyKey ?? "";
     if (!key) return;
@@ -1507,7 +1512,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         ) as HTMLElement);
         if (!file) return;
         try {
-          await this.app.fileManager.processFrontMatter(file, (fm) => {
+          await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             delete fm[key];
           });
         } catch (err) {
@@ -1838,6 +1843,8 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   private ensureSettingsGear(container: HTMLElement) {
     const addBtn = container.querySelector<HTMLElement>(".metadata-add-button");
     if (!addBtn) return;
+    // Marker class replaces a :has(.ffg-panel-actions) selector in styles.css.
+    addBtn.classList.add("ffg-has-panel-actions");
     if (addBtn.querySelector(".ffg-panel-actions")) return;
 
     const stopAll = (e: Event) => {
@@ -2014,7 +2021,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // file, signalling that the view may be out of date with disk.
   private markRefreshButtonStale(file: TFile, stale: boolean) {
     document.querySelectorAll<HTMLElement>(".ffg-settings-refresh").forEach((btn) => {
-      const container = btn.closest(".metadata-container") as HTMLElement | null;
+      const container = btn.closest<HTMLElement>(".metadata-container");
       if (!container) return;
       if (this.fileForContainer(container) === file) {
         btn.classList.toggle("ffg-stale", stale);
@@ -2278,7 +2285,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     const defaults = this.computeDefaultsForFile(file.path);
     if (defaults.size > 0) {
       try {
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
           this.applyDefaultsToFm(fm, defaults);
         });
       } catch (e) {
@@ -2407,7 +2414,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
       const exists = await this.app.vault.adapter.exists(this.scrubLogPath);
       if (!exists) return [];
       const raw = await this.app.vault.adapter.read(this.scrubLogPath);
-      const parsed = JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
       return Array.isArray(parsed) ? (parsed as ScrubLogEntry[]) : [];
     } catch (e) {
       console.error("[FFG] readScrubLog error", e);
@@ -2620,7 +2627,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         let captured: unknown = undefined;
         let didRemove = false;
         try {
-          await this.app.fileManager.processFrontMatter(file, (fm) => {
+          await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             if (
               Object.prototype.hasOwnProperty.call(fm, fieldName) &&
               this.isNullValue(fm[fieldName])
@@ -2677,7 +2684,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         let captured: unknown = undefined;
         let didRemove = false;
         try {
-          await this.app.fileManager.processFrontMatter(file, (fm) => {
+          await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
             if (Object.prototype.hasOwnProperty.call(fm, fieldName)) {
               captured = fm[fieldName];
               delete fm[fieldName];
@@ -2762,7 +2769,9 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     }> = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
       if (!this.fileInScope(file.path, scope)) continue;
-      const cached = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      const cached = this.app.metadataCache.getFileCache(file)?.frontmatter as
+        | Record<string, unknown>
+        | undefined;
       if (!cached) continue;
       if (!Object.prototype.hasOwnProperty.call(cached, sourceField)) continue;
       const sourceValue = cached[sourceField];
@@ -2800,7 +2809,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
     let capturedTarget: unknown = undefined;
     let didWrite = false;
     try {
-      await this.app.fileManager.processFrontMatter(file, (fm) => {
+      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         if (!Object.prototype.hasOwnProperty.call(fm, sourceField)) return;
         capturedSource = fm[sourceField];
         capturedTarget = Object.prototype.hasOwnProperty.call(fm, targetField)
@@ -2811,8 +2820,9 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
           fm[targetField] = capturedSource;
         } else if (resolution === "merge") {
           if (Array.isArray(capturedSource) && Array.isArray(capturedTarget)) {
-            const merged = [...capturedTarget];
-            for (const item of capturedSource) {
+            const sourceItems = capturedSource as unknown[];
+            const merged = [...(capturedTarget as unknown[])];
+            for (const item of sourceItems) {
               if (!merged.includes(item)) merged.push(item);
             }
             fm[targetField] = merged;
@@ -3292,7 +3302,7 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         return "no-frontmatter";
       }
 
-      await this.app.fileManager.processFrontMatter(file, (fm) => {
+      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         let mutated = false;
 
         // Defaults pass: insert missing keys (never overwrite).
@@ -4817,7 +4827,7 @@ class FfgSettingTab extends PluginSettingTab {
     const tabStrip = pausedZone.createDiv("ffg-tab-strip");
     const tabContent = pausedZone.createDiv("ffg-tab-content");
 
-    const tabs: Array<{ id: typeof this.activeTab; label: string }> = [
+    const tabs: Array<{ id: "groups" | "fields" | "cleanup"; label: string }> = [
       { id: "groups", label: "Grouping" },
       { id: "fields", label: "Customize Icons" },
       { id: "cleanup", label: "Cleanup" },

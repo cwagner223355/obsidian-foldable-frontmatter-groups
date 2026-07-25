@@ -361,7 +361,7 @@
   pointer-events: none;
 }
 
-.metadata-add-button:has(.ffg-panel-actions) {
+.metadata-add-button.ffg-has-panel-actions {
   display: flex;
   align-items: center;
 }
@@ -604,26 +604,26 @@
   flex-shrink: 0;
 }
 
-.ffg-template-card-action {
+.ffg-template-card-action.ffg-template-card-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 26px;
   height: 26px;
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-  border: none !important;
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+  border: none;
   color: var(--text-muted);
   border-radius: var(--radius-s);
   cursor: pointer;
-  padding: 0 !important;
-  box-shadow: none !important;
+  padding: 0;
+  box-shadow: none;
 }
 
-.ffg-template-card-action:hover:not(:disabled) {
+.ffg-template-card-action.ffg-template-card-action:hover:not(:disabled) {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+  background: var(--background-modifier-hover);
 }
 
 .ffg-template-card-action:disabled {
@@ -711,26 +711,26 @@
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
-button.ffg-cleanup-key-btn {
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-  border: none !important;
-  box-shadow: none !important;
-  padding: 0 !important;
+button.ffg-cleanup-key-btn.ffg-cleanup-key-btn {
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
   color: var(--text-normal);
   cursor: pointer;
   font: inherit;
   text-align: left;
 }
 
-button.ffg-cleanup-key-btn:hover {
+button.ffg-cleanup-key-btn.ffg-cleanup-key-btn:hover {
   color: var(--text-accent);
   text-decoration: underline;
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-  box-shadow: none !important;
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
 }
 
 .ffg-occurrence-filter {
@@ -842,12 +842,12 @@ button.ffg-cleanup-key-btn:hover {
   line-height: 1.5;
 }
 
-button.ffg-cleanup-nuke,
-.ffg-cleanup-table button.ffg-cleanup-nuke {
-  background-color: #6e1f30 !important;
-  background-image: none !important;
-  color: #ffffff !important;
-  border: 1px solid #1a0008 !important;
+button.ffg-cleanup-nuke.ffg-cleanup-nuke,
+.ffg-cleanup-table button.ffg-cleanup-nuke.ffg-cleanup-nuke {
+  background-color: #6e1f30;
+  background-image: none;
+  color: #ffffff;
+  border: 1px solid #1a0008;
   border-radius: var(--radius-s);
   font-weight: 700;
   text-transform: uppercase;
@@ -855,34 +855,34 @@ button.ffg-cleanup-nuke,
   font-size: var(--font-ui-smaller, 0.78em);
   padding: 4px 10px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 1px 0 rgba(0, 0, 0, 0.25) !important;
+    0 1px 0 rgba(0, 0, 0, 0.25);
   cursor: pointer;
   text-shadow: none;
 }
 
-button.ffg-cleanup-nuke:hover,
-.ffg-cleanup-table button.ffg-cleanup-nuke:hover {
-  background-color: #8b0a1f !important;
-  border-color: #000 !important;
-  color: #ffffff !important;
+button.ffg-cleanup-nuke.ffg-cleanup-nuke:hover,
+.ffg-cleanup-table button.ffg-cleanup-nuke.ffg-cleanup-nuke:hover {
+  background-color: #8b0a1f;
+  border-color: #000;
+  color: #ffffff;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25),
-    0 0 0 2px rgba(139, 10, 31, 0.5) !important;
+    0 0 0 2px rgba(139, 10, 31, 0.5);
 }
 
-button.ffg-cleanup-nuke:active {
-  background-color: #38071a !important;
+button.ffg-cleanup-nuke.ffg-cleanup-nuke:active {
+  background-color: #38071a;
 }
 
-button.ffg-cleanup-nuke:disabled,
-.ffg-cleanup-table button.ffg-cleanup-nuke:disabled {
-  background-color: transparent !important;
-  background-image: none !important;
-  color: var(--text-faint) !important;
-  border-color: var(--background-modifier-border) !important;
+button.ffg-cleanup-nuke.ffg-cleanup-nuke:disabled,
+.ffg-cleanup-table button.ffg-cleanup-nuke.ffg-cleanup-nuke:disabled {
+  background-color: transparent;
+  background-image: none;
+  color: var(--text-faint);
+  border-color: var(--background-modifier-border);
   font-weight: normal;
   text-transform: none;
   letter-spacing: normal;
-  box-shadow: none !important;
+  box-shadow: none;
   cursor: default;
 }
 
@@ -1252,31 +1252,31 @@ button.ffg-cleanup-nuke:disabled,
 }
 
 .ffg-cleanup-lint-btn.active-vault {
-  background: #6e1f30 !important;
-  color: #ffffff !important;
-  border-color: #1a0008 !important;
+  background: #6e1f30;
+  color: #ffffff;
+  border-color: #1a0008;
 }
 
 .ffg-cleanup-lint-btn.active-vault:hover {
-  background: #8b0a1f !important;
+  background: #8b0a1f;
 }
 
 .ffg-cleanup-lint-btn.active-template {
-  background: var(--interactive-accent) !important;
-  color: var(--text-on-accent) !important;
-  border-color: var(--interactive-accent) !important;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
 }
 
 .ffg-cleanup-lint-btn.active-template:hover {
-  background: var(--interactive-accent-hover, var(--interactive-accent)) !important;
+  background: var(--interactive-accent-hover, var(--interactive-accent));
 }
 
 .ffg-cleanup-lint-btn.ffg-cleanup-lint-disabled,
 .ffg-cleanup-lint-btn.ffg-cleanup-lint-disabled:hover {
   opacity: 0.35;
   cursor: not-allowed;
-  background: transparent !important;
-  color: var(--text-faint) !important;
+  background: transparent;
+  color: var(--text-faint);
 }
 
 .ffg-cleanup-lint-btn svg {
@@ -1735,15 +1735,9 @@ button.ffg-cleanup-nuke:disabled,
   justify-content: center;
   width: 22px;
   height: 22px;
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-  box-shadow: none !important;
-  border: none !important;
   color: var(--text-muted);
   border-radius: var(--radius-s);
   cursor: pointer;
-  padding: 0 !important;
   flex-shrink: 0;
 }
 
@@ -1792,20 +1786,24 @@ button.ffg-cleanup-nuke:disabled,
   justify-content: center;
   width: 22px;
   height: 22px;
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-  box-shadow: none !important;
-  border: none !important;
   color: var(--text-muted);
   border-radius: var(--radius-s);
   cursor: pointer;
-  padding: 0 !important;
   flex-shrink: 0;
 }
 
+/* Chrome reset; doubled class keeps it winning over app/theme button styles. */
+.ffg-template-field-group-toggle.ffg-template-field-group-toggle {
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  border: none;
+  padding: 0;
+}
+
 .ffg-template-field-group-toggle:hover {
-  background: var(--background-modifier-hover) !important;
+  background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
@@ -1828,8 +1826,8 @@ button.ffg-cleanup-nuke:disabled,
   font-weight: 600;
 }
 
-.ffg-group-contributed-th-tpl {
-  text-align: center !important;
+.ffg-group-contributed-table thead th.ffg-group-contributed-th-tpl {
+  text-align: center;
 }
 
 .ffg-group-contributed-table tbody td {
@@ -1856,10 +1854,6 @@ button.ffg-cleanup-nuke:disabled,
   height: 14px;
 }
 
-.ffg-template-field-delete:has(svg) {
-  /* size already set above */
-}
-
 .ffg-template-field-delete:hover {
   color: var(--text-error);
   background: var(--background-modifier-hover);
@@ -1868,6 +1862,17 @@ button.ffg-cleanup-nuke:disabled,
 .ffg-template-field-delete svg {
   width: 14px;
   height: 14px;
+}
+
+/* Chrome reset for the delete button. Doubled class keeps it winning over
+   app/theme button styles; placed after :hover to preserve the cascade. */
+.ffg-template-field-delete.ffg-template-field-delete {
+  background: transparent;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  border: none;
+  padding: 0;
 }
 
 .ffg-template-field-eye {
@@ -1950,13 +1955,13 @@ button.ffg-cleanup-nuke:disabled,
 .metadata-container.ffg-excluded .metadata-add-button,
 .metadata-container.ffg-excluded .ffg-group-header,
 .metadata-properties-heading.ffg-excluded-heading {
-  display: none !important;
+  display: none;
 }
 
 /* Stale-view indicator: orange refresh button when disk content diverged from
    the open view and the user hasn't reloaded yet. Click to sync from disk. */
 .ffg-settings-refresh.ffg-stale {
-  color: var(--color-orange, #e8a958) !important;
+  color: var(--color-orange, #e8a958);
   animation: ffg-stale-pulse 2s ease-in-out infinite;
 }
 

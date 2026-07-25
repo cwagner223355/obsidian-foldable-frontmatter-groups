@@ -374,6 +374,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     this.observer = null;
     document.querySelectorAll(".metadata-container").forEach((c) => this.deactivate(c));
     document.querySelectorAll(".ffg-panel-actions, .ffg-settings-gear").forEach((el) => el.remove());
+    document.querySelectorAll(".ffg-has-panel-actions").forEach((el) => el.classList.remove("ffg-has-panel-actions"));
   }
   // setTimeout wrapper whose callbacks are cancelled on unload.
   scheduleTimeout(fn, ms) {
@@ -385,7 +386,11 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   }
   async loadSettings() {
     var _a, _b, _c, _d, _e, _f;
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      await this.loadData()
+    );
     if (!Array.isArray(this.settings.groups)) {
       this.settings.groups = DEFAULT_SETTINGS.groups;
     }
@@ -1059,9 +1064,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     if (!this.settings.groupFoldingEnabled) return;
     const target = e.target;
     if (!target) return;
-    const propRow = target.closest(
-      ".metadata-property"
-    );
+    const propRow = target.closest(".metadata-property");
     if (!propRow) return;
     const key = (_a = propRow.dataset.propertyKey) != null ? _a : "";
     if (!key) return;
@@ -1394,6 +1397,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   ensureSettingsGear(container) {
     const addBtn = container.querySelector(".metadata-add-button");
     if (!addBtn) return;
+    addBtn.classList.add("ffg-has-panel-actions");
     if (addBtn.querySelector(".ffg-panel-actions")) return;
     const stopAll = (e) => {
       e.preventDefault();
@@ -2188,8 +2192,9 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
           fm[targetField] = capturedSource;
         } else if (resolution === "merge") {
           if (Array.isArray(capturedSource) && Array.isArray(capturedTarget)) {
+            const sourceItems = capturedSource;
             const merged = [...capturedTarget];
-            for (const item of capturedSource) {
+            for (const item of sourceItems) {
               if (!merged.includes(item)) merged.push(item);
             }
             fm[targetField] = merged;
