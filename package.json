@@ -1,6 +1,6 @@
 {
   "name": "foldable-frontmatter-groups",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Adds collapsible group headers, canonical key ordering, folder-scoped templates, and cleanup tools to the native Properties panel.",
   "main": "main.js",
   "scripts": {

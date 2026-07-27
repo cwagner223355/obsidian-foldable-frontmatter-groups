@@ -383,6 +383,12 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
   // Timers that must not fire after unload (they would repaint or reconcile
   // on a dead plugin). Cleared wholesale in onunload.
   private pendingTimers = new Set<number>();
+  // Paths FFG just created and is fully reconciling via applyDefaultsOnCreate.
+  // The file-open handler skips these so it can't fire a second, racing
+  // processFrontMatter pass on the same brand-new file — that race read the
+  // file before its disk write settled and threw a transient ENOENT. Entries
+  // self-expire after a short window (see applyDefaultsOnCreate).
+  private recentlyCreated = new Set<string>();
 
   async onload() {
     await this.loadSettings();
@@ -501,6 +507,10 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
         if (!this.settings.reconcileOnLeave) return;
         if (!this.settings.groupFoldingEnabled) return;
         if (this.isFileExcludedFromReconcile(file.path)) return;
+        // A file FFG just created is already fully reconciled by
+        // applyDefaultsOnCreate; skip the redundant pass so it can't race that
+        // write (the race threw a transient ENOENT on the not-yet-settled file).
+        if (this.recentlyCreated.has(file.path)) return;
         // Defer to next tick so the file-open paint isn't blocked by the
         // synchronous compute phase of reconcile.
         this.scheduleTimeout(() => {
@@ -2282,16 +2292,18 @@ export default class FoldableFrontmatterGroupsPlugin extends Plugin {
 
   async applyDefaultsOnCreate(file: TFile) {
     if (file.extension !== "md") return;
-    const defaults = this.computeDefaultsForFile(file.path);
-    if (defaults.size > 0) {
-      try {
-        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-          this.applyDefaultsToFm(fm, defaults);
-        });
-      } catch (e) {
-        console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
-      }
-    }
+    // Own this file's create-time reconcile in a single pass. A plugin that
+    // creates a note and immediately opens it (e.g. knox-timeline's meeting
+    // notes) triggers a file-open reconcile in the same tick; letting both run
+    // raced two processFrontMatter writes on the not-yet-settled file and threw
+    // a transient ENOENT. Mark the path so the file-open handler skips it, then
+    // run the full reconcile here (defaults + lint + canonical order) — a
+    // superset of the old defaults-only pass, so new notes also get ordered.
+    // The mark self-expires well after the create/open storm has passed.
+    this.recentlyCreated.add(file.path);
+    this.scheduleTimeout(() => this.recentlyCreated.delete(file.path), 2000);
+
+    await this.reconcileFrontmatter(file);
     await this.maybeInsertBodyTemplate(file);
 
     // A freshly created note's Properties panel renders only after these

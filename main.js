@@ -236,6 +236,12 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
     // Timers that must not fire after unload (they would repaint or reconcile
     // on a dead plugin). Cleared wholesale in onunload.
     this.pendingTimers = /* @__PURE__ */ new Set();
+    // Paths FFG just created and is fully reconciling via applyDefaultsOnCreate.
+    // The file-open handler skips these so it can't fire a second, racing
+    // processFrontMatter pass on the same brand-new file — that race read the
+    // file before its disk write settled and threw a transient ENOENT. Entries
+    // self-expire after a short window (see applyDefaultsOnCreate).
+    this.recentlyCreated = /* @__PURE__ */ new Set();
   }
   async onload() {
     await this.loadSettings();
@@ -329,6 +335,7 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
         if (!this.settings.reconcileOnLeave) return;
         if (!this.settings.groupFoldingEnabled) return;
         if (this.isFileExcludedFromReconcile(file.path)) return;
+        if (this.recentlyCreated.has(file.path)) return;
         this.scheduleTimeout(() => {
           void this.reconcileFrontmatter(file);
         }, 0);
@@ -1750,16 +1757,9 @@ var _FoldableFrontmatterGroupsPlugin = class _FoldableFrontmatterGroupsPlugin ex
   }
   async applyDefaultsOnCreate(file) {
     if (file.extension !== "md") return;
-    const defaults = this.computeDefaultsForFile(file.path);
-    if (defaults.size > 0) {
-      try {
-        await this.app.fileManager.processFrontMatter(file, (fm) => {
-          this.applyDefaultsToFm(fm, defaults);
-        });
-      } catch (e) {
-        console.error("[FFG] applyDefaultsOnCreate error", file.path, e);
-      }
-    }
+    this.recentlyCreated.add(file.path);
+    this.scheduleTimeout(() => this.recentlyCreated.delete(file.path), 2e3);
+    await this.reconcileFrontmatter(file);
     await this.maybeInsertBodyTemplate(file);
     this.scheduleTimeout(() => this.processAllContainers(), 100);
     this.scheduleTimeout(() => this.processAllContainers(), 600);
